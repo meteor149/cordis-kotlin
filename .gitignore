@@ -1,0 +1,7 @@
+.gradle/
+.kotlin/
+.idea/
+**/build/
+kotlin-js-store/
+out/
+*.iml
