@@ -2,6 +2,12 @@ name: Publish to Maven Central
 
 on:
   workflow_dispatch:
+    inputs:
+      run_tests:
+        description: Run the JVM test suite before publishing
+        required: true
+        type: boolean
+        default: true
   release:
     types: [released, prereleased]
 
@@ -15,10 +21,10 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up JDK 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "21"
@@ -28,6 +34,7 @@ jobs:
         run: chmod +x gradlew
 
       - name: Run tests
+        if: github.event_name == 'release' || inputs.run_tests
         run: ./gradlew :test --no-configuration-cache
 
       - name: Publish to Maven Central
