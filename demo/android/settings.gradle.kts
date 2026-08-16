@@ -12,6 +12,7 @@ dependencyResolutionManagement {
     repositories {
         google()
         maven("https://maven.aliyun.com/repository/public")
+        maven("https://central.sonatype.com/repository/maven-snapshots/")
         mavenCentral()
     }
 }
@@ -23,5 +24,3 @@ include(":theme-api")
 include(":plugins:forest")
 include(":plugins:ocean")
 include(":plugins:sunset")
-
-includeBuild("../..")
