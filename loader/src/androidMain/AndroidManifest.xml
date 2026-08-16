@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <activity
+            android:name="org.cordis.loader.CordisProxyActivity"
+            android:exported="false" />
+        <service
+            android:name="org.cordis.loader.CordisProxyService"
+            android:exported="false" />
+    </application>
+</manifest>

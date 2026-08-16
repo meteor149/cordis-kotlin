@@ -1,0 +1,1 @@
+-keep class org.cordis.demo.api.** { *; }

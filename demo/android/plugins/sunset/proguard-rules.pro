@@ -1,0 +1,1 @@
+-keep class dev.cordis.demo.plugins.sunset.** { *; }
