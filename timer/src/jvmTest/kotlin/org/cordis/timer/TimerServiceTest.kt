@@ -25,7 +25,11 @@ class TimerServiceTest {
         val owner = root.plugin(plugin<Unit>(name = "owner", inject = dependencies(TimerService.Key)) { ctx, _ ->
             ctx.timeout({ count.incrementAndGet() }, 25)
         }, Unit).await()
-        delay(70)
+        withTimeout(2_000) {
+            while (count.get() < 1) delay(5)
+        }
+        assertEquals(1, count.get())
+        delay(50)
         assertEquals(1, count.get())
         owner.dispose(); provider.dispose()
     }

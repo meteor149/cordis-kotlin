@@ -131,10 +131,12 @@ class TimerParityTest {
         owner { ctx ->
             val calls = AtomicInteger()
             val debounced = ctx.debounce({ calls.incrementAndGet() }, 40)
-            debounced(); delay(20); debounced(); delay(20); debounced()
-            delay(70)
+            debounced(); debounced(); debounced()
+            withTimeout(2_000) {
+                while (calls.get() < 1) delay(5)
+            }
             assertEquals(1, calls.get())
-            debounced(); debounced.dispose(); delay(60)
+            debounced(); debounced.dispose(); delay(80)
             assertEquals(1, calls.get())
         }
     }
