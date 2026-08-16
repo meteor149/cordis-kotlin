@@ -5,3 +5,9 @@
 kotlin-js-store/
 out/
 *.iml
+
+# Local publishing credentials and signing keys must never be committed.
+local.properties
+private-key.asc
+secret-key.asc
+secring.gpg

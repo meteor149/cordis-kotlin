@@ -1,16 +1,20 @@
+import com.vanniktech.maven.publish.MavenPublishBaseExtension
+
 plugins {
     kotlin("multiplatform") version "2.1.21" apply false
     id("com.android.library") version "8.7.2" apply false
+    id("com.vanniktech.maven.publish") version "0.34.0" apply false
 }
 
 allprojects {
-    group = "org.cordis"
-    version = "4.0.0-rc.8-kotlin.1"
+    group = "io.github.meteor149"
+    version = "0.0.1-SNAPSHOT"
 }
 
 subprojects {
     apply(plugin = "org.jetbrains.kotlin.multiplatform")
     apply(plugin = "com.android.library")
+    apply(plugin = "com.vanniktech.maven.publish")
 
     extensions.configure<org.jetbrains.kotlin.gradle.dsl.KotlinMultiplatformExtension> {
         compilerOptions {
@@ -25,6 +29,7 @@ subprojects {
             }
         }
         androidTarget {
+            publishLibraryVariants("release")
             compilerOptions {
                 jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
             }
@@ -63,6 +68,45 @@ subprojects {
     tasks.withType<Test>().configureEach {
         useJUnitPlatform()
         testLogging { events("passed", "skipped", "failed") }
+    }
+
+    val publicationGroup = group.toString()
+    val publicationArtifactId = name
+    val publicationVersion = version.toString()
+
+    extensions.configure<MavenPublishBaseExtension> {
+        publishToMavenCentral()
+        signAllPublications()
+        coordinates(publicationGroup, publicationArtifactId, publicationVersion)
+
+        pom {
+            name.set("Cordis Kotlin - $publicationArtifactId")
+            description.set("A Kotlin Multiplatform implementation of Cordis.")
+            inceptionYear.set("2021")
+            url.set("https://github.com/meteor149/cordis-kotlin")
+
+            licenses {
+                license {
+                    name.set("MIT License")
+                    url.set("https://opensource.org/license/mit")
+                    distribution.set("repo")
+                }
+            }
+
+            developers {
+                developer {
+                    id.set("meteor149")
+                    name.set("meteor149")
+                    url.set("https://github.com/meteor149")
+                }
+            }
+
+            scm {
+                url.set("https://github.com/meteor149/cordis-kotlin")
+                connection.set("scm:git:https://github.com/meteor149/cordis-kotlin.git")
+                developerConnection.set("scm:git:ssh://git@github.com/meteor149/cordis-kotlin.git")
+            }
+        }
     }
 }
 
