@@ -1,6 +1,8 @@
 package org.cordis
 
 import kotlinx.coroutines.async
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -91,16 +93,20 @@ class FiberLifecycleTest {
     fun `provider restored during in-flight load keeps the same root epoch`() = runBlocking {
         val root = Context()
         val dependency = ServiceKey<Int>("stable-epoch")
+        val loadStarted = CompletableDeferred<Unit>()
+        val finishLoad = CompletableDeferred<Unit>()
         var applies = 0
         val first = root.provide(dependency, 1)
         val consumer = root.inject(dependencies(dependency)) { _ ->
-            delay(50)
+            loadStarted.complete(Unit)
+            finishLoad.await()
             applies++
         }
-        delay(10)
-        val removal = launch { first.dispose() }
-        delay(5)
+
+        loadStarted.await()
+        val removal = launch(start = CoroutineStart.UNDISPATCHED) { first.dispose() }
         root.provide(dependency, 2)
+        finishLoad.complete(Unit)
         removal.join()
         consumer.await()
         assertEquals(FiberState.ACTIVE, consumer.state)
