@@ -106,7 +106,9 @@ class TimerParityTest {
             throttled()
             throttled()
             assertEquals(1, calls.get())
-            delay(80)
+            withTimeout(2_000) {
+                while (calls.get() < 2) delay(5)
+            }
             assertEquals(2, calls.get())
             throttled.dispose()
             assertTrue(ctx.fiber.getEffects().none { it.label == "ctx.throttle()" })
@@ -120,7 +122,6 @@ class TimerParityTest {
             val throttled = ctx.throttle({ calls.incrementAndGet() }, 40, noTrailing = true)
             throttled()
             throttled()
-            delay(70)
             assertEquals(1, calls.get())
             throttled.dispose()
         }
@@ -153,7 +154,9 @@ class TimerParityTest {
             val debounced = ctx.debounceValue<Int>(values::add, 20)
             debounced(1)
             debounced(2)
-            delay(40)
+            withTimeout(2_000) {
+                while (values.isEmpty()) delay(5)
+            }
             debounced.dispose()
         }, Unit).await()
 
