@@ -69,19 +69,31 @@ class FiberLifecycleTest {
     fun `dependency change waits for in-flight load and cleanup before reload`() = runBlocking {
         val root = Context()
         val dependency = ServiceKey<Int>("slow-dependency")
+        val loadStarted = CompletableDeferred<Unit>()
+        val finishLoad = CompletableDeferred<Unit>()
+        val cleanupStarted = CompletableDeferred<Unit>()
+        val finishCleanup = CompletableDeferred<Unit>()
         val trace = mutableListOf<String>()
         val provision = root.provide(dependency, 1)
         val consumer = root.inject(dependencies(dependency)) { _ ->
-            delay(40)
+            loadStarted.complete(Unit)
+            finishLoad.await()
             trace += "loaded"
-            collect { delay(40); trace += "unloaded" }
+            collect {
+                cleanupStarted.complete(Unit)
+                finishCleanup.await()
+                trace += "unloaded"
+            }
         }
-        delay(10)
+
+        loadStarted.await()
         assertEquals(FiberState.LOADING, consumer.state)
-        val removal = launch { provision.dispose() }
-        delay(40)
+        val removal = launch(start = CoroutineStart.UNDISPATCHED) { provision.dispose() }
+        finishLoad.complete(Unit)
+        cleanupStarted.await()
         assertEquals(FiberState.UNLOADING, consumer.state)
         root.provide(dependency, 2)
+        finishCleanup.complete(Unit)
         removal.join()
         consumer.await()
         assertEquals(FiberState.ACTIVE, consumer.state)
