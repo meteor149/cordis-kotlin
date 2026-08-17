@@ -1,0 +1,1 @@
+This sentence was loaded from plugin-surface.txt inside forest.jar, not from the Compose host.

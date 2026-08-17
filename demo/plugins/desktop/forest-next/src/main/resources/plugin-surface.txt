@@ -1,0 +1,1 @@
+This changed resource proves that the committed generation owns a fresh URLClassLoader.

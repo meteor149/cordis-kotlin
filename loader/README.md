@@ -1,5 +1,104 @@
 # Cordis Loader
 
+## Desktop JVM plugin JARs
+
+`JvmModuleLoader` loads independently built Cordis plugins from JAR files already installed below
+an application-controlled trusted directory. The host registers trusted release metadata, then
+uses the `jvm-plugin:<id>` specifier in a normal Cordis loader entry:
+
+```kotlin
+val pluginRoot = appData.resolve("plugins").toFile()
+val modules = JvmModuleLoader(pluginRoot)
+modules.register(
+    JvmModuleDescriptor(
+        id = "example",
+        version = "1.0.0",
+        entryClass = "com.example.plugin.ExamplePlugin",
+        file = pluginRoot.resolve("example/1.0.0/plugin.jar"),
+        expectedSha256 = trustedReleaseMetadata.sha256,
+        dependencies = listOf("shared-feature"),
+        sharedHostPackages = setOf("com.example.host.api"),
+    ),
+)
+loader.internal = modules
+loader.create(EntryOptions(name = modules.moduleUrl("example")))
+```
+
+The entry class must be a Kotlin `object` or have a public no-argument constructor, and it must
+implement the host's `org.cordis.Plugin`. Build plugin JARs against the API without packaging a
+second Cordis runtime:
+
+```kotlin
+dependencies {
+    compileOnly("io.github.meteor149:loader:<version>")
+}
+```
+
+### Isolation and dependencies
+
+Plugin classes and resources load child-first. JDK, Kotlin, coroutines, atomicfu, datetime, and
+Cordis packages load from the host. Add only stable API packages to `sharedHostPackages`; all other
+host application packages are hidden from plugin code. Types crossing the host/plugin boundary,
+including Compose UI contracts, must be owned by one of these shared packages.
+
+There are two dependency mechanisms:
+
+- `dependencies` names other registered Cordis modules. Their class loaders are searched after the
+  plugin's own classes, and HMR tracks the module graph transitively.
+- `classpath` contains private, checksummed JARs owned by one plugin release. These JARs share that
+  plugin's class loader and are also watched as reload inputs.
+
+Exact checksummed JNI files can be supplied through `nativeLibraries`. A plugin can resolve them
+with `System.loadLibrary`; native code is still subject to the JVM and operating system's normal
+unloading limitations.
+
+```kotlin
+JvmModuleDescriptor(
+    id = "example",
+    version = "1.0.0",
+    entryClass = "com.example.plugin.ExamplePlugin",
+    file = pluginJar,
+    expectedSha256 = pluginSha256,
+    classpath = listOf(JvmModuleArtifact(privateLibrary, privateLibrarySha256)),
+    nativeLibraries = listOf(JvmModuleArtifact(nativeLibrary, nativeLibrarySha256)),
+)
+```
+
+Every artifact is canonicalized, required to remain below `pluginRoot`, and rechecked against its
+SHA-256 digest on registration and before every load. `JvmModuleVerifier` is an additional hook for
+publisher signatures, certificates, or host release policy. Downloading and signature trust remain
+the host's responsibility; use immutable, versioned release directories rather than overwriting a
+running JAR in place.
+
+### Transactional reload and release
+
+Registering a new descriptor with the same id stages metadata without changing the active plugin.
+The HMR service watches every descriptor artifact and performs the runtime replacement and loader
+commit as one transaction:
+
+```kotlin
+modules.register(nextDescriptor)
+hmr.stash(nextDescriptor.file.toPath().toUri().toString())
+```
+
+If importing the new generation or applying its Cordis plugin fails, HMR rolls back the staged
+class loaders and recreates the previous fibers. A successful commit closes superseded loaders as
+soon as no active dependent references them. This releases JAR file handles, but classes become
+garbage-collectable only after plugin code has also released threads, callbacks, UI nodes, and
+other strong references. Put those cleanups in Cordis effects.
+
+When an entry is permanently removed, dispose its Cordis fiber first, then release and unregister
+the module. `release` also closes dependencies that are no longer reachable from another directly
+imported module. Stop HMR before closing the loader during application shutdown:
+
+```kotlin
+modules.release("example")
+modules.unregister("example")
+
+hmr.stop()
+modules.close()
+```
+
 ## Android plugin APKs
 
 `AndroidModuleLoader` loads Cordis plugins from APK, JAR, or raw dex containers already installed

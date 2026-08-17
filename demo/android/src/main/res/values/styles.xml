@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.CordisTimer" parent="android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:windowActionModeOverlay">true</item>
+        <item name="android:colorAccent">#7EA2FF</item>
+        <item name="android:navigationBarColor">#111A2E</item>
+        <item name="android:statusBarColor">#111A2E</item>
+        <item name="android:windowNoTitle">true</item>
+    </style>
+</resources>
