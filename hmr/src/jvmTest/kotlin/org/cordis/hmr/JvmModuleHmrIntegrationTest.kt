@@ -53,7 +53,7 @@ class JvmModuleHmrIntegrationTest {
 
             val hmr = Hmr(root, HmrConfig(base = temporary.toString(), debounce = 60_000))
             modules.register(descriptor("2", JvmHmrPluginV2::class.java.name, secondJar))
-            hmr.stash(secondJar.toUri().toString())
+            hmr.stash(secondJar.toFile().canonicalFile.toPath().toUri().toString())
 
             assertTrue(hmr.partialReload(), "second generation reload failed")
             val secondPlugin = modules.activeModule(MODULE_ID)?.plugin
@@ -63,7 +63,7 @@ class JvmModuleHmrIntegrationTest {
             assertSame(entry, entry.fiber?.attributes?.get(Entry.ATTRIBUTE), "entry association was not restored")
 
             modules.register(descriptor("3", JvmHmrBrokenPlugin::class.java.name, brokenJar))
-            hmr.stash(brokenJar.toUri().toString())
+            hmr.stash(brokenJar.toFile().canonicalFile.toPath().toUri().toString())
 
             assertFalse(hmr.partialReload(), "broken generation unexpectedly committed")
             assertEquals("v2", System.getProperty(PROBE_PROPERTY), "rollback did not reapply the second generation")
