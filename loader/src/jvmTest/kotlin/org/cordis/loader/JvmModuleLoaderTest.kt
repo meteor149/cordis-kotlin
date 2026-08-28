@@ -42,8 +42,8 @@ class JvmModuleLoaderTest {
         modules.register(descriptor)
 
         assertTrue(modules.contains(modules.moduleUrl("basic")))
-        assertTrue(modules.contains(jar.toUri().toString()))
-        assertEquals(listOf(jar.toUri().toString()), modules.linked(modules.moduleUrl("basic")))
+        assertTrue(modules.contains(jar.canonicalUrl()))
+        assertEquals(listOf(jar.canonicalUrl()), modules.linked(modules.moduleUrl("basic")))
 
         val root = Context()
         val loader = Loader(root)
@@ -75,7 +75,7 @@ class JvmModuleLoaderTest {
         modules.register(descriptor("reload", "2", "dev.plugins.ReloadPlugin", secondJar))
         assertSame(first, modules.import(modules.moduleUrl("reload"), null))
 
-        val rollback = modules.beginReload(setOf(secondJar.toUri().toString()))
+        val rollback = modules.beginReload(setOf(secondJar.canonicalUrl()))
         val rejected = rollback.import(modules.moduleUrl("reload")) as Plugin<*>
         assertNotSame(first, rejected)
         assertEquals("two", rejected.javaClass.getMethod("resource").invoke(rejected))
@@ -83,7 +83,7 @@ class JvmModuleLoaderTest {
         assertSame(first, modules.activeModule("reload")?.plugin)
         assertNull(rejected.javaClass.classLoader.getResource("plugin-resource.txt"))
 
-        val replacement = modules.beginReload(setOf(secondJar.toUri().toString()))
+        val replacement = modules.beginReload(setOf(secondJar.canonicalUrl()))
         val second = replacement.import(modules.moduleUrl("reload")) as Plugin<*>
         replacement.commit()
         val secondHandle = assertNotNull(modules.activeModule("reload"))
@@ -112,13 +112,13 @@ class JvmModuleLoaderTest {
         val first = modules.import(modules.moduleUrl("consumer"), null) as Plugin<*>
         assertEquals("dep-v1", first.javaClass.getMethod("value").invoke(first))
         assertEquals(
-            listOf(consumer.toUri().toString(), modules.moduleUrl("dependency")),
+            listOf(consumer.canonicalUrl(), modules.moduleUrl("dependency")),
             modules.linked(modules.moduleUrl("consumer")),
         )
 
         modules.register(descriptor("dependency", "2", "dev.dependency.DependencyPlugin", dependencyV2))
         val reload = modules.beginReload(setOf(
-            dependencyV2.toUri().toString(),
+            dependencyV2.canonicalUrl(),
             modules.moduleUrl("consumer"),
         ))
         val second = reload.import(modules.moduleUrl("consumer")) as Plugin<*>
@@ -236,9 +236,9 @@ class JvmModuleLoaderTest {
         ))
 
         assertEquals(1, verifications)
-        assertEquals(setOf(external.toUri().toString()), modules.externals())
+        assertEquals(setOf(external.canonicalUrl()), modules.externals())
         assertEquals(
-            listOf(jar.toUri().toString(), native.toUri().toString()),
+            listOf(jar.canonicalUrl(), native.canonicalUrl()),
             modules.linked(modules.moduleUrl("metadata")),
         )
         modules.import(modules.moduleUrl("metadata"), null)
@@ -268,6 +268,8 @@ class JvmModuleLoaderTest {
     )
 
     private fun artifact(path: Path) = JvmModuleArtifact(path.toFile(), jvmModuleSha256(path.toFile()))
+
+    private fun Path.canonicalUrl(): String = toFile().canonicalFile.toPath().toUri().toString()
 
     private fun pluginJar(name: String, className: String, value: String, resource: String = value): Path {
         val packageName = className.substringBeforeLast('.')
