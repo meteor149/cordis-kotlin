@@ -1,6 +1,8 @@
+@file:OptIn(kotlin.time.ExperimentalTime::class)
+
 package org.cordis.loader
 
-import kotlinx.datetime.Clock
+import kotlin.time.Clock
 import org.cordis.Context
 import org.cordis.EffectScope
 import org.cordis.CoreEvents

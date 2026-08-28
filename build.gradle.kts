@@ -2,7 +2,7 @@ import com.vanniktech.maven.publish.MavenPublishBaseExtension
 
 plugins {
     kotlin("multiplatform") version "2.1.21" apply false
-    id("com.android.library") version "8.7.2" apply false
+    id("com.android.library") version "8.10.0" apply false
     id("com.vanniktech.maven.publish") version "0.34.0" apply false
 }
 

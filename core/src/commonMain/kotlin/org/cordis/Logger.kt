@@ -1,9 +1,11 @@
+@file:OptIn(kotlin.time.ExperimentalTime::class)
+
 package org.cordis
 
 import kotlinx.atomicfu.atomic
 import kotlinx.atomicfu.locks.SynchronizedObject
 import kotlinx.atomicfu.locks.synchronized
-import kotlinx.datetime.Clock
+import kotlin.time.Clock
 import kotlin.math.abs
 
 enum class LoggerType { ERROR, INFO, WARN, DEBUG }

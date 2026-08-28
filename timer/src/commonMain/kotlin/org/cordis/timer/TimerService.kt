@@ -1,3 +1,5 @@
+@file:OptIn(kotlin.time.ExperimentalTime::class)
+
 package org.cordis.timer
 
 import kotlinx.atomicfu.atomic
@@ -14,7 +16,7 @@ import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
-import kotlinx.datetime.Clock
+import kotlin.time.Clock
 import org.cordis.Context
 import org.cordis.Disposable
 import org.cordis.EffectHandle
