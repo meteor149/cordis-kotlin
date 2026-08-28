@@ -35,43 +35,45 @@ class JvmModuleHmrIntegrationTest {
     }
 
     @Test
-    fun `real JVM jars hot reload transactionally and restore the old runtime after apply failure`() = runBlocking {
-        val firstJar = fixtureJar("plugin-v1", JvmHmrPluginV1::class.java)
-        val secondJar = fixtureJar("plugin-v2", JvmHmrPluginV2::class.java)
-        val brokenJar = fixtureJar("plugin-broken", JvmHmrBrokenPlugin::class.java)
-        val modules = JvmModuleLoader(temporary.toFile())
-        modules.register(descriptor("1", JvmHmrPluginV1::class.java.name, firstJar))
+    fun `real JVM jars hot reload transactionally and restore the old runtime after apply failure`() {
+        runBlocking {
+            val firstJar = fixtureJar("plugin-v1", JvmHmrPluginV1::class.java)
+            val secondJar = fixtureJar("plugin-v2", JvmHmrPluginV2::class.java)
+            val brokenJar = fixtureJar("plugin-broken", JvmHmrBrokenPlugin::class.java)
+            val modules = JvmModuleLoader(temporary.toFile())
+            modules.register(descriptor("1", JvmHmrPluginV1::class.java.name, firstJar))
 
-        val root = Context()
-        val loader = Loader(root, LoaderConfig(temporary.toUri().toString()))
-        loader.internal = modules
-        loader.create(EntryOptions(id = "dynamic", name = modules.moduleUrl(MODULE_ID), config = Unit))
-        val entry = loader.resolve("dynamic")
-        val firstPlugin = modules.activeModule(MODULE_ID)?.plugin
-        assertEquals("v1", System.getProperty(PROBE_PROPERTY))
+            val root = Context()
+            val loader = Loader(root, LoaderConfig(temporary.toUri().toString()))
+            loader.internal = modules
+            loader.create(EntryOptions(id = "dynamic", name = modules.moduleUrl(MODULE_ID), config = Unit))
+            val entry = loader.resolve("dynamic")
+            val firstPlugin = modules.activeModule(MODULE_ID)?.plugin
+            assertEquals("v1", System.getProperty(PROBE_PROPERTY), "initial generation did not apply")
 
-        val hmr = Hmr(root, HmrConfig(base = temporary.toString(), debounce = 60_000))
-        modules.register(descriptor("2", JvmHmrPluginV2::class.java.name, secondJar))
-        hmr.stash(secondJar.toUri().toString())
+            val hmr = Hmr(root, HmrConfig(base = temporary.toString(), debounce = 60_000))
+            modules.register(descriptor("2", JvmHmrPluginV2::class.java.name, secondJar))
+            hmr.stash(secondJar.toUri().toString())
 
-        assertTrue(hmr.partialReload())
-        val secondPlugin = modules.activeModule(MODULE_ID)?.plugin
-        assertEquals("v2", System.getProperty(PROBE_PROPERTY))
-        assertNotSame(firstPlugin, secondPlugin)
-        assertTrue(root.registry.has(requireNotNull(secondPlugin)))
-        assertSame(entry, entry.fiber?.attributes?.get(Entry.ATTRIBUTE))
+            assertTrue(hmr.partialReload(), "second generation reload failed")
+            val secondPlugin = modules.activeModule(MODULE_ID)?.plugin
+            assertEquals("v2", System.getProperty(PROBE_PROPERTY), "second generation did not apply")
+            assertNotSame(firstPlugin, secondPlugin, "reload retained the first plugin instance")
+            assertTrue(root.registry.has(requireNotNull(secondPlugin)), "registry lost the second generation")
+            assertSame(entry, entry.fiber?.attributes?.get(Entry.ATTRIBUTE), "entry association was not restored")
 
-        modules.register(descriptor("3", JvmHmrBrokenPlugin::class.java.name, brokenJar))
-        hmr.stash(brokenJar.toUri().toString())
+            modules.register(descriptor("3", JvmHmrBrokenPlugin::class.java.name, brokenJar))
+            hmr.stash(brokenJar.toUri().toString())
 
-        assertFalse(hmr.partialReload())
-        assertEquals("v2", System.getProperty(PROBE_PROPERTY))
-        assertSame(secondPlugin, modules.activeModule(MODULE_ID)?.plugin)
-        assertTrue(root.registry.has(requireNotNull(secondPlugin)))
+            assertFalse(hmr.partialReload(), "broken generation unexpectedly committed")
+            assertEquals("v2", System.getProperty(PROBE_PROPERTY), "rollback did not reapply the second generation")
+            assertSame(secondPlugin, modules.activeModule(MODULE_ID)?.plugin, "rollback changed the active module")
+            assertTrue(root.registry.has(requireNotNull(secondPlugin)), "rollback lost the active registry entry")
 
-        hmr.stop()
-        loader.root.stop()
-        modules.close()
+            hmr.stop()
+            loader.root.stop()
+            modules.close()
+        }
     }
 
     private fun descriptor(version: String, entryClass: String, jar: Path) = JvmModuleDescriptor(
