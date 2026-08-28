@@ -1,4 +1,5 @@
 import com.vanniktech.maven.publish.MavenPublishBaseExtension
+import org.gradle.api.tasks.testing.logging.TestExceptionFormat
 
 plugins {
     kotlin("multiplatform") version "2.1.21" apply false
@@ -67,7 +68,10 @@ subprojects {
 
     tasks.withType<Test>().configureEach {
         useJUnitPlatform()
-        testLogging { events("passed", "skipped", "failed") }
+        testLogging {
+            events("passed", "skipped", "failed")
+            exceptionFormat = TestExceptionFormat.FULL
+        }
     }
 
     val publicationGroup = group.toString()
