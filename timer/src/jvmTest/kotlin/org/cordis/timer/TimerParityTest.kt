@@ -1,6 +1,7 @@
 package org.cordis.timer
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.take
@@ -54,7 +55,7 @@ class TimerParityTest {
         val timer = root.plugin(TimerPlugin, Unit).await()
         lateinit var task: kotlinx.coroutines.Deferred<Unit>
         val fiber = root.plugin(plugin<Unit>(name = "timeout-owner", inject = dependencies(TimerService.Key)) { ctx, _ ->
-            task = async { ctx.timeout(5_000) }
+            task = async(start = CoroutineStart.UNDISPATCHED) { ctx.timeout(5_000) }
         }, Unit).await()
         fiber.dispose()
         assertFailsWith<CancellationException> { task.await() }
