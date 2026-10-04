@@ -5,8 +5,8 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 
 class PluginPackageTest {
-    private val desktop = PackageVariant("desktop", "desktop", listOf("windows", "linux", "macos"), listOf("any"), "desktop/plugin.jar", "example.Plugin", minJava = 17)
-    private val android = PackageVariant("android", "android", listOf("android"), listOf("any"), "android/plugin.apk", "example.Plugin", "example.plugin", minAndroidApi = 35)
+    private val desktop = PackageVariant("desktop", listOf("windows", "linux", "macos").map { PackageTarget(it, listOf("arm", "x86")) }, PackageRuntime("jvm", "example.Plugin", "17"), "desktop/plugin.jar")
+    private val android = PackageVariant("android", listOf(PackageTarget("android", listOf("arm", "x86"))), PackageRuntime("android-dex", "example.Plugin", "35"), "android/plugin.apk")
     private fun manifest(variants: List<PackageVariant> = listOf(desktop, android)) = PluginPackageManifest(
         id = "example.plugin", version = "1.0.0", variants = variants,
         files = variants.map { PackageFile(it.artifact, 1, "a".repeat(64)) },
@@ -14,19 +14,19 @@ class PluginPackageTest {
 
     @Test
     fun dualTargetAndSingleTargetSelection() {
-        val windows = PackageHost("desktop", "windows", "x86_64", javaVersion = 21)
-        val mobile = PackageHost("android", "android", "arm64", androidApi = 35)
+        val windows = PackageHost("windows", "x86_64", runtimes = mapOf("jvm" to "21"))
+        val mobile = PackageHost("android", "arm64", runtimes = mapOf("android-dex" to "35"))
         assertEquals(desktop, manifest().select(windows))
         assertEquals(android, manifest().select(mobile))
         assertFailsWith<IllegalArgumentException> { manifest(listOf(android)).select(windows) }
-        assertFailsWith<IllegalArgumentException> { manifest().select(mobile.copy(androidApi = 34)) }
+        assertFailsWith<IllegalArgumentException> { manifest().select(mobile.copy(runtimes = mapOf("android-dex" to "34"))) }
         assertFailsWith<IllegalArgumentException> { manifest().select(windows) { false } }
     }
 
     @Test
     fun overlappingAndDisjointVariants() {
-        assertFailsWith<IllegalArgumentException> { manifest(listOf(desktop, desktop.copy(id = "other", arch = listOf("arm64")))).validate() }
-        val split = manifest(listOf(desktop.copy(os = listOf("windows")), desktop.copy(id = "linux", os = listOf("linux"), artifact = "linux/plugin.jar")))
+        assertFailsWith<IllegalArgumentException> { manifest(listOf(desktop, desktop.copy(id = "other", artifact = "other.jar"))).validate() }
+        val split = manifest(listOf(desktop.copy(targets = listOf(PackageTarget("windows", listOf("x86")))), desktop.copy(id = "linux", targets = listOf(PackageTarget("linux", listOf("arm"))), artifact = "linux/plugin.jar")))
         split.validate()
     }
 

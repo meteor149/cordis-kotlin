@@ -20,8 +20,8 @@ class PluginPackageArchiveTest {
         return PluginPackageManifest(
             id = "example.plugin", version = "1.0.0",
             variants = listOf(
-                PackageVariant("desktop", "desktop", listOf("windows"), listOf("any"), "desktop/plugin.jar", "example.Plugin", minJava = 17),
-                PackageVariant("android", "android", listOf("android"), listOf("any"), "android/plugin.apk", "example.Plugin", "example.plugin", minAndroidApi = 35),
+                PackageVariant("desktop", listOf("windows").map { PackageTarget(it, listOf("arm", "x86")) }, PackageRuntime("jvm", "example.Plugin", "17"), "desktop/plugin.jar"),
+                PackageVariant("android", listOf(PackageTarget("android", listOf("arm", "x86"))), PackageRuntime("android-dex", "example.Plugin", "35"), "android/plugin.apk"),
             ),
             files = listOf("desktop/plugin.jar", "android/plugin.apk").map { path ->
                 val file = File(root, path)

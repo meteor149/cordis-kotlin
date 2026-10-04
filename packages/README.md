@@ -1,25 +1,45 @@
 # Cordis plugin packages
 
-Optional offline distribution layer, independent of Cordis core and any application SDK.
-`PluginPackageManifest` describes one release with executable variants. V2 declares
-compatibility through each variant's `targets`: `windows`, `macos`, `linux`, `android` or
-`ios`, architecture families `arm`/`x86`, optional `bits` (32/64, default both), and optional
-numeric `minSystemVersion`. Desktop systems share JAR technology; Android uses APKs. iOS
-framework ZIP metadata can be inspected/selected, but this module adds no iOS code loader.
-`extensions` at package/variant level carries host-defined inert metadata.
+Optional distribution metadata independent of Cordis core, application SDKs and execution
+technology. Format V2 is the only supported format; the earlier unpublished schema has no
+compatibility path. `PluginPackageManifest` describes a logical release and its artifact
+variants. The common model does not require JVM classes, JAR/APK suffixes, Java, Android API
+levels or iOS frameworks.
+
+Each variant has `targets`, an opaque `artifact` path, a `runtime` descriptor and optional
+host extensions. Runtime IDs are open identities: for example `jvm`, `android-dex`,
+`native-library`, `wasm` or an application-defined script loader. `entryPoint` may be a class,
+native symbol or script entry; only that loader interprets it. `minVersion` constrains the
+advertised loader/runtime version, while `metadata` carries loader-specific inert data.
+No declaration installs or implements a loader.
 
 ```json
-{"id":"windows","artifact":"targets/windows/plugin.jar","entryClass":"example.Plugin",
- "minJava":17,"targets":[{"system":"windows","arch":["x86"],"bits":[64],"minSystemVersion":"10.0.22000"}]}
+{"id":"linux-native","artifact":"targets/linux/plugin.so",
+ "runtime":{"id":"native-library","entryPoint":"kcode_plugin_init","minVersion":"1"},
+ "targets":[{"system":"linux","arch":["x86"],"bits":[64],
+   "minSystemVersion":"6.5","maxSystemVersion":"6.8.12",
+   "distribution":{"id":"ubuntu","minVersion":"22.04","maxVersion":"24.04"},
+   "requiredFeatures":["linux.io-uring"]}]}
 ```
 
-Numeric system versions are compared component by component, padding missing components
-with zero; an unknown host version rejects a constrained target. A host defines the OS
-version convention (kcode uses Windows NT/build, macOS release, Linux kernel and Android
-release numbers). Java version and Android API level remain separate runtime constraints.
-ARM64 is `arm` with `bits:[64]`; family-only declarations must not hide native ABI limits.
-V1 legacy `platform`/`os`/ABI-specific `arch` selectors remain readable. V2 cannot mix legacy
-selectors with `targets`, overlap target ranges, or mix artifact runtime kinds in one variant.
+Systems are Windows/macOS/Linux/Android/iOS (`windows`, `macos`, `linux`, `android`, `ios`).
+Architecture families are `arm`/`x86`; `bits` defaults to 32 and 64. ARM64 requires `arm`
+and 64 bits. Optional system and Linux distribution bounds are inclusive. Numeric versions
+compare component by component, with missing components padded with zero (`22.04` equals
+`22.4.0`). A short maximum is an exact numeric bound, not a wildcard. Inverted ranges fail
+validation. Unknown versions cannot satisfy either bound. Linux kernel and distribution
+release requirements are independent, and distribution IDs match exactly.
+
+`requiredFeatures` lists open system feature IDs which the host must actually advertise;
+OS versions do not establish feature availability or permission. `PackageHost` contains
+actual system/process facts, optional Linux distribution, features and a map of available
+runtime IDs to versions. A native host need not advertise or run Java.
+
+Variants using the same runtime cannot overlap in system, family, bitness and version
+ranges. Different distribution IDs or disjoint ranges can separate variants. Positive
+feature requirements do not make ranges disjoint. A host supporting several runtime
+alternatives must resolve its policy explicitly; selection still requires exactly one
+matching variant. All metadata remains inert until a host loader accepts it.
 
 ```kotlin
 implementation("io.github.meteor149:packages:0.0.1-SNAPSHOT")
@@ -42,8 +62,8 @@ selected one. The packer uses sorted entries and fixed timestamps.
 val packages = PluginPackageArchive()
 val release = packages.deploy(source, expectedArchiveSha256, appPrivateRoot)
 val variant = release.manifest.select(host) { variant -> hostSdkAccepts(variant.extensions) }
-val jarOrApk = release.artifact(variant)
-// Host builds JvmModuleDescriptor/AndroidModuleDescriptor and mounts through its manager.
+val artifact = release.artifact(variant)
+// The host dispatches the artifact and runtime descriptor to its own loader/manager.
 ```
 
 Deployment copies the source to a private staging snapshot, verifies and extracts it, then
@@ -68,7 +88,7 @@ From this repository run `:packages:packPlugin` with `-PpackageManifest=<plugin.
 sizes/hashes are replaced from actual files. The packer verifies the resulting archive and
 prints its SHA-256 for the trusted release channel. The JVM artifact also exposes
 `org.cordis.packages.PluginPackageCliKt` with `pack` and `inspect` commands for external
-Gradle/CLI integrations. Neither command executes plugin entry classes.
+Gradle/CLI integrations. Neither command executes plugin entry points.
 
 Package IDs are case-sensitive dotted identities. Each segment accepts ASCII letters and
 digits separated by single hyphens; case is preserved through codec and dependency lookup.
