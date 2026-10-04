@@ -42,7 +42,7 @@ class PackageTargetTest {
             assertEquals(manifest, PluginPackageCodec.decode(PluginPackageCodec.encode(manifest)))
             assertEquals(variant, manifest.select(PackageHost(system, "arm64", runtimes = mapOf("native-library" to "1"))))
             assertFailsWith<IllegalArgumentException> { manifest.select(PackageHost(system, "arm64", runtimes = mapOf("jvm" to "21"))) }
-            assertFailsWith<IllegalArgumentException> { manifest.copy(formatVersion = 1).validate() }
+            assertFailsWith<IllegalArgumentException> { manifest.copy(formatVersion = 0).validate() }
         }
     }
 
@@ -86,14 +86,14 @@ class PackageTargetTest {
     }
 
     @Test
-    fun invalidSelectorsAndLegacyFieldsAreRejected() {
+    fun invalidSelectorsAndUnknownFieldsAreRejected() {
         for (value in listOf("", "10.x", "10-beta", "1..2", "1.2.3.4.5", "9999999999")) {
             assertFailsWith<IllegalArgumentException> { validateSystemVersion(value) }
         }
         for (target in listOf(PackageTarget("mobile", listOf("arm")), PackageTarget("ios", listOf("any")), PackageTarget("linux", listOf("arm"), bits = listOf(16)), PackageTarget("ios", listOf("arm"), distribution = PackageDistributionTarget("ubuntu")))) {
             assertFailsWith<IllegalArgumentException> { target.validate() }
         }
-        val source = """{"formatVersion":2,"id":"example.old","version":"1.0.0","variants":[{"id":"old","platform":"desktop"}],"files":[]}"""
+        val source = """{"formatVersion":1,"id":"example.invalid","version":"1.0.0","variants":[{"id":"invalid","platform":"desktop"}],"files":[]}"""
         assertFailsWith<IllegalArgumentException> { PluginPackageCodec.decode(source.encodeToByteArray()) }
     }
 }

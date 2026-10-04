@@ -12,7 +12,7 @@ import kotlinx.serialization.json.JsonObject
 data class PluginPackageManifest(
     @OptIn(ExperimentalSerializationApi::class)
     @EncodeDefault
-    val formatVersion: Int = 2,
+    val formatVersion: Int = 1,
     val id: String,
     val version: String,
     val displayName: String? = null,
@@ -24,7 +24,7 @@ data class PluginPackageManifest(
     val extensions: JsonObject = JsonObject(emptyMap()),
 ) {
     fun validate() {
-        require(formatVersion == 2) { "Unsupported package format: $formatVersion" }
+        require(formatVersion == 1) { "Unsupported package format: $formatVersion" }
         validatePackageId(id)
         validatePackageVersion(version)
         require(listOfNotNull(displayName, description, license).all { it.isNotBlank() }) { "Empty package label" }

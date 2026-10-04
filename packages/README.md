@@ -1,8 +1,7 @@
 # Cordis plugin packages
 
 Optional distribution metadata independent of Cordis core, application SDKs and execution
-technology. Format V2 is the only supported format; the earlier unpublished schema has no
-compatibility path. `PluginPackageManifest` describes a logical release and its artifact
+technology. The manifest declares `formatVersion: 1`. `PluginPackageManifest` describes a logical release and its artifact
 variants. The common model does not require JVM classes, JAR/APK suffixes, Java, Android API
 levels or iOS frameworks.
 
