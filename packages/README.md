@@ -52,3 +52,10 @@ sizes/hashes are replaced from actual files. The packer verifies the resulting a
 prints its SHA-256 for the trusted release channel. The JVM artifact also exposes
 `org.cordis.packages.PluginPackageCliKt` with `pack` and `inspect` commands for external
 Gradle/CLI integrations. Neither command executes plugin entry classes.
+
+Package IDs are case-sensitive dotted identities. Each segment accepts ASCII letters and
+digits separated by single hyphens; case is preserved through codec and dependency lookup.
+This permits existing Cordis mount identities such as `provider.llm.koog.OpenAI` without
+renaming installations. IDs do not determine deployment directory names, which use archive
+digests. Variant selectors retain their lowercase identifier grammar; archive path collision
+checks remain independent of package identity.

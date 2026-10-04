@@ -170,7 +170,7 @@ object PluginPackageCodec {
 }
 
 fun validatePackageId(id: String) {
-    require(id.split('.').size > 1 && id.split('.').all { it.matches(SegmentPattern) }) { "Invalid package id: $id" }
+    require(id.split('.').size > 1 && id.split('.').all { it.matches(PackageIdSegmentPattern) }) { "Invalid package id: $id" }
 }
 
 fun validatePackageVersion(version: String) {
@@ -184,6 +184,7 @@ fun validatePackagePath(path: String) {
 }
 
 internal val Sha256Pattern = Regex("[a-f0-9]{64}")
+private val PackageIdSegmentPattern = Regex("[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*")
 private val SegmentPattern = Regex("[a-z0-9]+(?:-[a-z0-9]+)*")
 private val VersionPattern = Regex("(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(?:\\.(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?")
 private val DesktopOs = setOf("windows", "linux", "macos")

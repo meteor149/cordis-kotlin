@@ -51,6 +51,20 @@ class PluginPackageTest {
     }
 
     @Test
+    fun packageIdsPreserveCaseAndDependencyIdentity() {
+        val provider = manifest().copy(id = "provider.llm.koog.OpenAI")
+        val consumer = manifest().copy(id = "example.Consumer", dependencies = listOf(PackageDependency(provider.id, provider.version)))
+        assertEquals(provider, PluginPackageCodec.decode(PluginPackageCodec.encode(provider)))
+        assertEquals(listOf(provider, consumer), resolvePackageGraph(listOf(consumer, provider)))
+        assertFailsWith<IllegalArgumentException> {
+            resolvePackageGraph(listOf(consumer, provider.copy(id = provider.id.lowercase())))
+        }
+        listOf("example..Plugin", "example.Plugin/name", "example.Plugin_Name", "example.Plug\u0131n", "example.-Plugin").forEach { id ->
+            assertFailsWith<IllegalArgumentException> { validatePackageId(id) }
+        }
+    }
+
+    @Test
     fun unsafePathsAndSemverAreRejected() {
         listOf("../a", "/a", "C:/a", "a\\b", "a//b", "a/./b", "a/CON.txt", "a/b.", "a/b ").forEach { path ->
             assertFailsWith<IllegalArgumentException> { validatePackagePath(path) }
