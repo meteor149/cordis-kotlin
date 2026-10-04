@@ -114,7 +114,7 @@ class PluginPackageArchive(private val limits: PackageArchiveLimits = PackageArc
         try {
             ZipOutputStream(Files.newOutputStream(temporary)).use { zip ->
                 fun entry(name: String, bytes: ByteArray) {
-                    zip.putNextEntry(ZipEntry(name).also { it.time = 315532800000L })
+                    zip.putNextEntry(canonicalZipEntry(name))
                     zip.write(bytes)
                     zip.closeEntry()
                 }
@@ -128,7 +128,7 @@ class PluginPackageArchive(private val limits: PackageArchiveLimits = PackageArc
                     }
                     require(Files.isRegularFile(source, LinkOption.NOFOLLOW_LINKS) && Files.size(source) == record.size && record.size <= limits.maxEntryBytes) { "Invalid package payload: ${record.path}" }
                     require(packageFileSha256(source.toFile()) == record.sha256) { "Payload checksum mismatch: ${record.path}" }
-                    zip.putNextEntry(ZipEntry(record.path).also { it.time = 315532800000L })
+                    zip.putNextEntry(canonicalZipEntry(record.path))
                     Files.newInputStream(source).use { copyBounded(it, zip, record.size) }
                     zip.closeEntry()
                 }
@@ -222,6 +222,7 @@ fun packageFileSha256(file: File): String = file.inputStream().use { input ->
     val digest = MessageDigest.getInstance("SHA-256")
     val buffer = ByteArray(65536)
     while (true) {
+        if (Thread.currentThread().isInterrupted) throw java.io.InterruptedIOException("Package hashing interrupted")
         val count = input.read(buffer)
         if (count < 0) break
         digest.update(buffer, 0, count)
@@ -233,6 +234,7 @@ private fun copyBounded(input: java.io.InputStream, output: java.io.OutputStream
     val buffer = ByteArray(65536)
     var count = 0L
     while (true) {
+        if (Thread.currentThread().isInterrupted) throw java.io.InterruptedIOException("Package processing interrupted")
         val read = input.read(buffer)
         if (read < 0) return count
         require(count <= limit - read) { "Package stream exceeds limit" }
@@ -245,3 +247,11 @@ private fun copyBounded(input: java.io.InputStream, output: java.io.OutputStream
 private fun ByteArray.u16(offset: Int): Int = (this[offset].toInt() and 255) or ((this[offset + 1].toInt() and 255) shl 8)
 private fun ByteArray.u32(offset: Int): Long = u16(offset).toLong() or (u16(offset + 2).toLong() shl 16)
 private fun ByteArray.hex(): String = joinToString("") { "%02x".format(it.toInt() and 255) }
+
+// ZIP's DOS timestamp is local time. A fixed UTC epoch would produce different bytes across
+// publisher time zones (and extended timestamps before 1980). Use the same local DOS date.
+private fun canonicalZipEntry(name: String): ZipEntry = ZipEntry(name).also {
+    it.time = java.util.GregorianCalendar(1980, 0, 1, 0, 0, 0).apply {
+        set(java.util.Calendar.MILLISECOND, 0)
+    }.timeInMillis
+}

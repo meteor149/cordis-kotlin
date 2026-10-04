@@ -42,3 +42,13 @@ Shared host SDK/framework classes must be excluded from artifacts. Native compon
 and class-loader transactions remain in `loader`; application compatibility and composition
 remain with the host. JS/Apple can inspect metadata and resolve variants, but have no archive
 deployment or native plugin loading added by this module.
+
+## Build-tool entry point
+
+From this repository run `:packages:packPlugin` with `-PpackageManifest=<plugin.json>`,
+`-PpackagePayload=<directory>` and `-PpackageOutput=<output.kplugin>`, using
+`--no-configuration-cache`. The manifest template lists payload paths; its valid placeholder
+sizes/hashes are replaced from actual files. The packer verifies the resulting archive and
+prints its SHA-256 for the trusted release channel. The JVM artifact also exposes
+`org.cordis.packages.PluginPackageCliKt` with `pack` and `inspect` commands for external
+Gradle/CLI integrations. Neither command executes plugin entry classes.

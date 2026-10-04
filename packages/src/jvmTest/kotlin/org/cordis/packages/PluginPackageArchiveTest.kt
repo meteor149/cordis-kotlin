@@ -71,6 +71,20 @@ class PluginPackageArchiveTest {
     }
 
     @Test
+    fun archiveBytesAreIndependentOfPublisherTimeZone() {
+        val root = Files.createTempDirectory("cordis-package-timezone").toFile()
+        val previous = java.util.TimeZone.getDefault()
+        try {
+            val payload = File(root, "source").also { it.mkdirs() }
+            val manifest = fixture(payload)
+            java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("Asia/Shanghai"))
+            val first = PluginPackageArchive().pack(manifest, payload, File(root, "china.kplugin"))
+            java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("America/Los_Angeles"))
+            assertEquals(first, PluginPackageArchive().pack(manifest, payload, File(root, "america.kplugin")))
+        } finally { java.util.TimeZone.setDefault(previous); root.deleteRecursively() }
+    }
+
+    @Test
     fun rejectsUnsafeUndeclaredCollidingAndSymlinkEntries() {
         val root = Files.createTempDirectory("cordis-package-unsafe").toFile()
         try {

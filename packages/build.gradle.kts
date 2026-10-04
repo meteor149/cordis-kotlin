@@ -2,6 +2,18 @@ plugins {
     kotlin("plugin.serialization")
 }
 
+tasks.register<JavaExec>("packPlugin") {
+    group = "distribution"
+    description = "Build a .kplugin archive from -PpackageManifest, -PpackagePayload and -PpackageOutput"
+    dependsOn("jvmMainClasses")
+    val compilation = kotlin.targets.getByName("jvm").compilations.getByName("main")
+    classpath(compilation.output.allOutputs, configurations.named("jvmRuntimeClasspath"))
+    mainClass.set("org.cordis.packages.PluginPackageCliKt")
+    doFirst {
+        args("pack", project.providers.gradleProperty("packageManifest").get(), project.providers.gradleProperty("packagePayload").get(), project.providers.gradleProperty("packageOutput").get())
+    }
+}
+
 kotlin {
     sourceSets {
         commonMain.dependencies {
