@@ -31,6 +31,11 @@ Currently supported:
 
 ## Desktop JVM dynamic loading
 
+The optional [packages](packages/README.md) module supplies cross-platform `.kplugin`
+manifests, deterministic JAR/APK variant selection, exact package dependency resolution,
+and verified offline archive packing/deployment. Application SDK compatibility, publisher
+trust, configuration and installation transactions remain the host's responsibility.
+
 The desktop loader runs Cordis plugins from verified JARs in an application-controlled directory.
 
 - Plugin code, resources, private JAR dependencies, and JNI libraries are isolated per generation.
