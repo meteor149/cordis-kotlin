@@ -1,5 +1,12 @@
 # Cordis Loader
 
+Whole-tree transactions distinguish candidate failure with successful restoration from
+`TreeRestorationException`, whose cause is the candidate/publication failure and whose
+suppressed exceptions describe failed retirement or restoration. Rollback retires all tracked
+entries, including partially removed entries outside the current root recipe. If retirement
+fails, the previous recipe remains available for diagnostics but is not allocated over the
+uncertain owner. Hosts must close admission and recover or terminate that owner explicitly.
+
 ## Host-coordinated tree transactions
 
 `tree.withTreeTransaction(entries) { publish() }` prepares module identities, applies the

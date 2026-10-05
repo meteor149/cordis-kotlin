@@ -6,6 +6,16 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import org.cordis.asDynamicPlugin
 
+/** A candidate failed and its previous tree could not be safely restored. */
+class TreeRestorationException(
+    transactionFailure: Throwable,
+    restorationFailures: List<Throwable>,
+) : IllegalStateException("Tree transaction failed and restoration is incomplete", transactionFailure) {
+    init {
+        restorationFailures.filter { it !== this }.forEach(::addSuppressed)
+    }
+}
+
 /** Copies data containers, borrowing opaque runtime configuration objects. */
 fun detachedEntryOptions(entry: EntryOptions): EntryOptions {
     fun value(input: Any?): Any? = when (input) {
@@ -90,20 +100,29 @@ suspend fun <T> EntryTree.withTreeTransaction(
         // after the host has already atomically committed the new generation.
         withContext(NonCancellable) { publish() }
     } catch (error: Throwable) {
+        val restorationFailures = mutableListOf<Throwable>()
+        suspend fun restore(action: suspend () -> Unit) {
+            try { action() } catch (failure: Throwable) { restorationFailures += failure }
+        }
         withContext(NonCancellable) {
             // Include partial creations too, not only entries in the old root list.
-            root.data.toList().asReversed().forEach { item ->
-                runCatching { root.remove(item.id, true) }.exceptionOrNull()?.let(error::addSuppressed)
+            store.values.toList().asReversed().forEach { entry ->
+                restore { entry.parent.remove(entry.options.id, true) }
             }
             root.data = previous.toMutableList()
-            previous.forEach { item ->
-                runCatching { root.create(item) }.exceptionOrNull()?.let(error::addSuppressed)
+            // Uncertain retirement must not overlap restored allocations. Keep the
+            // previous recipe for diagnostics, but let the host recover the owner.
+            if (restorationFailures.isEmpty()) {
+                previous.forEach { item ->
+                    restore { root.create(item) }
+                }
+                restore {
+                    await()
+                    entries().forEach { it.fiber?.await() }
+                }
             }
-            runCatching {
-                await()
-                entries().forEach { it.fiber?.await() }
-            }.exceptionOrNull()?.let(error::addSuppressed)
         }
+        if (restorationFailures.isNotEmpty()) throw TreeRestorationException(error, restorationFailures)
         throw error
     } finally {
         loader.transactionActive = false

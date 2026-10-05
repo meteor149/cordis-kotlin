@@ -17,6 +17,41 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class TreeTransactionTest {
+    @Test
+    fun `failed retirement prevents allocation of the restoration recipe`(): Unit = runBlocking {
+        val loader = Loader(Context())
+        var allocations = 0
+        var releases = 0
+        loader.builtins["old"] = plugin<Unit> { _, _ ->
+            allocations++
+            collect { releases++; error("retirement refused") }
+        }
+        loader.applyTree(listOf(entry("old")))
+        assertFailsWith<TreeRestorationException> { loader.applyTree(emptyList()) }
+        assertEquals(1, allocations)
+        assertEquals(1, releases)
+        assertFalse(loader.transactionActive)
+        assertFailsWith<IllegalStateException> { loader.root.stop() }
+    }
+
+    @Test
+    fun `failed restoration reports a distinct outcome and retains both causes`(): Unit = runBlocking {
+        val loader = Loader(Context())
+        var refuseOld = false
+        val restoration = IllegalArgumentException("old allocation refused")
+        val publication = IllegalStateException("publication refused")
+        loader.builtins["old"] = plugin<Unit> { _, _ -> if (refuseOld) throw restoration }
+        loader.applyTree(listOf(entry("old")))
+        refuseOld = true
+        val failure = assertFailsWith<TreeRestorationException> {
+            loader.withTreeTransaction(emptyList()) { throw publication }
+        }
+        assertEquals(publication.message, failure.cause?.message)
+        assertTrue(failure.suppressedExceptions.any { it === restoration })
+        assertFalse(loader.transactionActive)
+        loader.root.stop()
+    }
+
     private val probe = EventKey<Unit, String>("transaction/probe")
     private fun fixture(): Loader = Loader(Context()).also { loader ->
         loader.builtins["old"] = plugin<Unit>(name = "old") { ctx, _ -> ctx.listen(probe) { "old" } }
