@@ -72,6 +72,6 @@ tasks.test {
     }
     systemProperty("cordis.test.androidSdk", androidSdk.getOrElse(""))
     systemProperty("cordis.test.gradleUserHome", gradle.gradleUserHomeDir.absolutePath)
-    // Nested builds run offline against the same Gradle cache.
+    // Share the Gradle cache; platform tests may fetch AGP tools on a fresh runner.
     inputs.files(androidDexToolForTests)
 }

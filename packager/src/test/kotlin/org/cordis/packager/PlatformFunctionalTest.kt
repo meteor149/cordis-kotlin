@@ -26,7 +26,7 @@ class PlatformFunctionalTest {
     }
 
     private fun run(vararg arguments: String) = GradleRunner.create().withProjectDir(directory)
-        .withPluginClasspath().withArguments(*arguments, "--configuration-cache", "--max-workers=2", "--stacktrace", "--offline",
+        .withPluginClasspath().withArguments(*arguments, "--configuration-cache", "--max-workers=2", "--stacktrace",
             "--gradle-user-home", System.getProperty("cordis.test.gradleUserHome")).build()
 
     @Test
