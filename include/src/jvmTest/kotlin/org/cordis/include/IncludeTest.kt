@@ -29,6 +29,30 @@ class IncludeTest {
     @TempDir
     lateinit var temporary: Path
 
+    @Test
+    fun `refresh reapplies patches without writing expanded layered config`() = runBlocking {
+        val root = Context()
+        loader(root)
+        val file = temporary.resolve("layered.yml")
+        Files.writeString(file, "- id: inner\n  name: cordis:test\n")
+        val include = Include(root, IncludeConfig(
+            path = file.toString(),
+            patches = listOf(PatchOptions(id = "inner", disabled = changeTo(true))),
+            layered = true,
+        ))
+        include.init()
+        assertNull(root.bailEvent(valueEvent, Unit))
+        val changed = "- id: inner\n  name: cordis:test\n  config: changed\n"
+        Files.writeString(file, changed)
+        include.refresh()
+        assertNull(root.bailEvent(valueEvent, Unit))
+        include.write()
+        assertEquals(changed, Files.readString(file))
+        include.updateConfig(include.config.copy(patches = emptyList()))
+        assertEquals("default", root.bailEvent(valueEvent, Unit))
+        include.root.stop()
+    }
+
     private fun fixturePlugin(name: String, event: EventKey<Unit, String>, value: String) =
         plugin<Any?>(name = name) { ctx, _ ->
             ctx.listen(event) { value }
@@ -50,9 +74,10 @@ class IncludeTest {
         ))
         val entry = EntryOptions(id = "entry", name = "cordis:test", extra = mapOf("custom" to 1, "kept" to true))
 
-        include.applyPatches(mutableListOf(entry))
+        val composed = include.applyPatches(mutableListOf(entry))
 
-        assertEquals(mapOf("custom" to 2, "kept" to true), entry.extra)
+        assertEquals(mapOf("custom" to 2, "kept" to true), composed.single().extra)
+        assertEquals(mapOf("custom" to 1, "kept" to true), entry.extra)
     }
 
     private fun writeBase(path: Path) {

@@ -47,11 +47,9 @@ data class PatchOptions(
     val intercept: FieldPatch<Map<String, Any?>?> = FieldPatch.Keep,
     val isolate: FieldPatch<IsolationConfig?> = FieldPatch.Keep,
     val extra: Map<String, Any?> = emptyMap(),
+    val remove: Boolean = false,
+    val replacement: String? = null,
 )
-
-private inline fun <T> FieldPatch<T>.ifSet(block: (T) -> Unit) {
-    if (this is FieldPatch.Set) block(value)
-}
 
 /**
  * A relative path is resolved from the owning loader file. `config:foo.yml`
@@ -63,6 +61,7 @@ data class IncludeConfig(
     val initial: List<EntryOptions>? = null,
     val patches: List<PatchOptions>? = null,
     val enableLogs: Boolean? = null,
+    val layered: Boolean = false,
 )
 
 class Include(parent: Context, var config: IncludeConfig) : EntryTree(parent), RefreshableEntryTree {
@@ -100,7 +99,7 @@ class Include(parent: Context, var config: IncludeConfig) : EntryTree(parent), R
             enableLogs = next.enableLogs ?: enableLogs
             data.orEmpty().toList()
         }
-        root.update(current)
+        root.update(applyPatches(current.toMutableList()))
         return true
     }
 
@@ -119,66 +118,14 @@ class Include(parent: Context, var config: IncludeConfig) : EntryTree(parent), R
 
     fun applyPatches(input: MutableList<EntryOptions>): List<EntryOptions> {
         val patches = synchronized(ioLock) { config.patches.orEmpty() }
-        if (patches.isEmpty()) return input
-        val entries = linkedMapOf<String, EntryOptions>()
-        fun buildMap(items: List<EntryOptions>) {
-            items.forEach { entry ->
-                if (entry.id.isNotBlank()) entries[entry.id] = entry
-                if (entry.group == true) (entry.config as? List<*>)
-                    ?.filterIsInstance<EntryOptions>()?.let(::buildMap)
-            }
-        }
-        buildMap(input)
-
-        patches.forEach { patch ->
-            val inserted = patch.insert
-            if (inserted != null) {
-                if (patch.id == null) {
-                    input += inserted
-                } else {
-                    val target = entries[patch.id]
-                    if (target == null) {
-                        warn("patch insert: entry %s not found", patch.id)
-                    } else if (target.group != true) {
-                        warn("patch insert: entry %s is not a group", patch.id)
-                    } else {
-                        val children = (target.config as? List<*>)?.filterIsInstance<EntryOptions>()?.toMutableList()
-                            ?: mutableListOf()
-                        children += inserted
-                        target.config = children
-                    }
-                }
-                return@forEach
-            }
-            val id = patch.id
-            if (id == null) {
-                warn("patch: id is required for non-insert patches")
-                return@forEach
-            }
-            val target = entries[id]
-            if (target == null) {
-                warn("patch: entry %s not found", id)
-                return@forEach
-            }
-            if (patch.name != null && patch.name != target.name) {
-                warn("patch: name mismatch for %s (expected %s, got %s), skipping", id, target.name, patch.name)
-                return@forEach
-            }
-            patch.config.ifSet { target.config = it }
-            patch.group.ifSet { target.group = it }
-            patch.disabled.ifSet { target.disabled = it }
-            patch.inject.ifSet { target.inject = it }
-            patch.intercept.ifSet { target.intercept = it }
-            patch.isolate.ifSet { target.isolate = it }
-            if (patch.extra.isNotEmpty()) target.extra = target.extra + patch.extra
-        }
-        return input
+        val result = composeEntries(input, listOf(CompositionLayer(filename, patches)))
+        result.diagnostics.forEach { warn(it.message) }
+        return result.entries
     }
-
     suspend fun stop() = root.stop()
 
     override suspend fun refresh() {
-        if (read()) root.update(synchronized(ioLock) { data.orEmpty().toList() })
+        if (read()) root.update(applyPatches(synchronized(ioLock) { data.orEmpty().toMutableList() }))
     }
 
     private fun writeFileNow(entries: List<EntryOptions>) = synchronized(ioLock) {
@@ -190,6 +137,7 @@ class Include(parent: Context, var config: IncludeConfig) : EntryTree(parent), R
     }
 
     override fun write() {
+        if (config.layered) return
         ctx.emitEvent(LoaderEvents.ConfigUpdate, Unit)
         // Config files are intentionally small. A synchronous atomic replace
         // prevents the owner from being disposed while a background write is
