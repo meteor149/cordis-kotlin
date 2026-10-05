@@ -30,6 +30,8 @@ abstract class PluginRelease @Inject constructor(private val releaseName: String
 
     abstract val packageId: Property<String>
     abstract val packageVersion: Property<String>
+    /** Append a digest of the resolved manifest/payload to distinguish immutable rebuilds. */
+    abstract val contentVersion: Property<Boolean>
     abstract val displayName: Property<String>
     abstract val description: Property<String>
     abstract val license: Property<String>
@@ -44,6 +46,7 @@ abstract class PluginRelease @Inject constructor(private val releaseName: String
     }
 
     init {
+        contentVersion.convention(false)
         manifestExtensions.convention("{}")
         dependencies.convention(emptyList())
     }
@@ -79,6 +82,8 @@ abstract class PluginVariant @Inject constructor(private val variantName: String
     abstract val androidMinSdk: Property<Int>
     abstract val androidTargetSdk: Property<Int>
     abstract val excludedPayloadPaths: SetProperty<String>
+    /** Explicitly use dependency base classes, discarding META-INF/versions implementations. */
+    abstract val ignoreMultiReleaseEntries: Property<Boolean>
 
     init {
         runtimeMetadata.convention("{}")
@@ -102,6 +107,7 @@ abstract class PluginVariant @Inject constructor(private val variantName: String
         ))
         sharedClasses.convention(emptySet())
         excludedPayloadPaths.convention(emptySet())
+        ignoreMultiReleaseEntries.convention(false)
     }
 
     fun target(value: PackageTarget) = targets.add(value)

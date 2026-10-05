@@ -29,6 +29,7 @@ internal class JvmArtifactAdapter(private val project: Project) : ArtifactAdapte
             jars.from(privateClosure(project, compilation.runtimeDependencyConfigurationName, variant))
             sharedPackages.set(variant.sharedPackages)
             sharedClasses.set(variant.sharedClasses)
+            ignoreMultiReleaseEntries.set(variant.ignoreMultiReleaseEntries)
             entryPoint.set(variant.entryPoint)
             runtimeMinVersion.set(variant.runtimeMinVersion)
             outputFile.set(project.layout.buildDirectory.file("cordis/artifacts/${release.name}/${variant.name}/plugin.jar"))

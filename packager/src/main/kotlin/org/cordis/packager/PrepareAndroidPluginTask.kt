@@ -39,6 +39,7 @@ abstract class PrepareAndroidPluginTask : DefaultTask() {
     @get:Input abstract val sharedPackages: SetProperty<String>
     @get:Input abstract val sharedClasses: SetProperty<String>
     @get:Input abstract val excludedPayloadPaths: SetProperty<String>
+    @get:Input abstract val ignoreMultiReleaseEntries: Property<Boolean>
     @get:Input abstract val incompleteAndroidDependencies: ListProperty<String>
     @get:Optional @get:InputFile @get:PathSensitive(PathSensitivity.NONE) abstract val manifest: RegularFileProperty
     @get:InputFile @get:PathSensitive(PathSensitivity.NONE) abstract val androidJar: RegularFileProperty
@@ -50,7 +51,10 @@ abstract class PrepareAndroidPluginTask : DefaultTask() {
     @get:OutputFile abstract val outputFile: RegularFileProperty
     @get:Inject abstract val execOperations: ExecOperations
 
-    init { incompleteAndroidDependencies.convention(emptyList()) }
+    init {
+        incompleteAndroidDependencies.convention(emptyList())
+        ignoreMultiReleaseEntries.convention(false)
+    }
 
     @TaskAction
     fun prepare() {
@@ -85,7 +89,7 @@ abstract class PrepareAndroidPluginTask : DefaultTask() {
         compiledResources.forEach { link.addAll(listOf("-R", it.absolutePath)) }
         runTool(aapt2.get().asFile, link)
 
-        val contents = JarContents(sharedPackages.get(), sharedClasses.get())
+        val contents = JarContents(sharedPackages.get(), sharedClasses.get(), ignoreMultiReleaseEntries.get())
         fun generatedR(path: String): Boolean = namespaces.any { namespace ->
             val prefix = namespace.replace('.', '/') + "/R"
             path == "$prefix.class" || path.startsWith("$prefix$") && path.endsWith(".class")

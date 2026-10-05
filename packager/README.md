@@ -130,6 +130,11 @@ cordisPackages {
 `.sha256` sidecar. `packagePlugins` builds every declared release. A module may declare
 several releases with different entries, platform support, dependency exclusions and assets.
 Each release has a distinct package ID; version defaults to the project's version.
+Set `contentVersion` to `true` to append `+content.<sha256>` to the base version. The
+digest covers the complete resolved manifest, payload checksums and file extensions,
+including host ABI/configuration metadata. Rebuilding unchanged inputs keeps the same
+identity. The declared output filename stays stable; catalog filenames use the resolved
+immutable version. Use a base version without existing build metadata for this option.
 
 Targets are explicit support declarations, not inferred from the list of KMP targets.
 `runtimeMinVersion` is a runtime requirement (JVM version or Android API level).
@@ -145,8 +150,11 @@ Declaring an iOS target or another runtime does not create a corresponding loade
 The JVM adapter merges the target's compiled JAR and private runtime dependencies. It
 preserves resources, merges `META-INF/services`, strips signatures and module descriptors,
 rejects duplicate private classes/conflicting resources, and checks that the entry exists.
-Multi-release dependencies require explicit preprocessing rather than silently flattening
-their versioned classes.
+Multi-release dependencies fail by default. Set `ignoreMultiReleaseEntries` explicitly on a
+variant to use only dependency base classes and discard `META-INF/versions` implementations.
+Verify that those base classes support the selected runtime. Compiler-only `.kotlin_module`
+metadata is omitted. Distinct license/notice/dependency notices are retained in deterministic
+merged documents; private classes and ordinary resource conflicts still fail.
 
 The Android library adapter consumes the existing AAR and private AAR/JAR dependencies.
 It merges manifests, links a standalone resource table with SDK AAPT2, regenerates namespace

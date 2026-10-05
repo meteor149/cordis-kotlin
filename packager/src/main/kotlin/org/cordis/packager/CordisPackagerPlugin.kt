@@ -73,6 +73,7 @@ class CordisPackagerPlugin : Plugin<Project> {
                         dependencies = release.dependencies.get(), variants = emptyList(), files = emptyList(), extensions = jsonObject(release.manifestExtensions.get()),
                     )))
                     variants.set(inputs)
+                    contentVersion.set(release.contentVersion)
                     extensionsFile.set(release.extensionsFile)
                     payloadDirectory.set(release.payloadDirectory)
                     archiveFile.set(release.outputFile)

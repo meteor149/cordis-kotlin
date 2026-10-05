@@ -1,7 +1,9 @@
 package org.cordis.packager
 
 import java.io.File
+import java.security.MessageDigest
 import javax.inject.Inject
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import org.cordis.packages.PackageFile
@@ -35,11 +37,14 @@ abstract class VariantInput @Inject constructor() {
 @CacheableTask
 abstract class PackPluginTask : DefaultTask() {
     @get:Input abstract val manifestTemplate: Property<String>
+    @get:Input abstract val contentVersion: Property<Boolean>
     @get:Nested abstract val variants: ListProperty<VariantInput>
     @get:Optional @get:InputFile @get:PathSensitive(PathSensitivity.NONE) abstract val extensionsFile: RegularFileProperty
     @get:Optional @get:InputDirectory @get:PathSensitive(PathSensitivity.RELATIVE) abstract val payloadDirectory: DirectoryProperty
     @get:OutputFile abstract val archiveFile: RegularFileProperty
     @get:OutputFile abstract val checksumFile: RegularFileProperty
+
+    init { contentVersion.convention(false) }
 
     @TaskAction
     fun pack() {
@@ -70,11 +75,17 @@ abstract class PackPluginTask : DefaultTask() {
             variant.copy(extensions = mergedExtensions(variant.extensions, input.extensionsFile.orNull?.asFile))
         }
         val template = Json.decodeFromString<PluginPackageManifest>(manifestTemplate.get())
-        val manifest = template.copy(
+        val resolvedManifest = template.copy(
             variants = resolved,
             files = files.values.sortedBy { it.path },
             extensions = mergedExtensions(template.extensions, extensionsFile.orNull?.asFile),
         )
+        val manifest = if (contentVersion.get()) {
+            val digest = MessageDigest.getInstance("SHA-256")
+                .digest(Json.encodeToString(resolvedManifest).encodeToByteArray())
+                .joinToString("") { "%02x".format(it.toInt() and 255) }
+            resolvedManifest.copy(version = "${template.version}+content.$digest")
+        } else resolvedManifest
         val digest = PluginPackageArchive().pack(manifest, root, archiveFile.get().asFile)
         checksumFile.get().asFile.apply { parentFile.mkdirs(); writeText("$digest\n") }
     }

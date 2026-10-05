@@ -26,10 +26,13 @@ abstract class PrepareJvmPluginTask : DefaultTask() {
     @get:Input abstract val entryPoint: Property<String>
     @get:Optional @get:Input abstract val runtimeMinVersion: Property<String>
     @get:OutputFile abstract val outputFile: RegularFileProperty
+    @get:Input abstract val ignoreMultiReleaseEntries: Property<Boolean>
+
+    init { ignoreMultiReleaseEntries.convention(false) }
 
     @TaskAction
     fun prepare() {
-        val contents = JarContents(sharedPackages.get(), sharedClasses.get())
+        val contents = JarContents(sharedPackages.get(), sharedClasses.get(), ignoreMultiReleaseEntries.get())
         jars.files.sortedBy { it.name }.forEach { contents.addJar(it) }
         contents.requireEntry(entryPoint.get())
         runtimeMinVersion.orNull?.let { minimum ->
@@ -45,9 +48,14 @@ abstract class PrepareJvmPluginTask : DefaultTask() {
 }
 
 /** One private class closure, with deterministic resources and explicit duplicate handling. */
-internal class JarContents(private val sharedPackages: Set<String>, private val sharedClasses: Set<String>) {
+internal class JarContents(
+    private val sharedPackages: Set<String>,
+    private val sharedClasses: Set<String>,
+    private val ignoreMultiReleaseEntries: Boolean = false,
+) {
     val entries = sortedMapOf<String, ByteArray>()
     private val services = sortedMapOf<String, LinkedHashSet<String>>()
+    private val notices = sortedMapOf<String, LinkedHashSet<String>>()
 
     fun isShared(path: String): Boolean {
         if (!path.endsWith(".class")) return false
@@ -69,7 +77,13 @@ internal class JarContents(private val sharedPackages: Set<String>, private val 
         org.cordis.packages.validatePackagePath(path)
         if (isShared(path) || path == "META-INF/MANIFEST.MF" || path.endsWith("module-info.class") ||
             Regex("META-INF/[^/]+\\.(SF|RSA|DSA|EC)", RegexOption.IGNORE_CASE).matches(path)) return
+        if (path.endsWith(".kotlin_module")) return
+        if (ignoreMultiReleaseEntries && path.startsWith("META-INF/versions/")) return
         require(!path.startsWith("META-INF/versions/")) { "Multi-release JAR requires explicit preprocessing: $path" }
+        if (Regex("META-INF/(LICENSE|NOTICE|DEPENDENCIES)([.-].*)?", RegexOption.IGNORE_CASE).matches(path)) {
+            notices.getOrPut(path) { linkedSetOf() }.add(bytes.decodeToString().trimEnd())
+            return
+        }
         if (path.startsWith("META-INF/services/")) {
             services.getOrPut(path) { linkedSetOf() }.addAll(bytes.decodeToString().lineSequence()
                 .map { it.substringBefore('#').trim() }.filter { it.isNotEmpty() }.toList())
@@ -85,7 +99,9 @@ internal class JarContents(private val sharedPackages: Set<String>, private val 
     }
 
     fun write(file: File) {
-        val complete = entries + services.mapValues { (_, lines) -> (lines.sorted().joinToString("\n") + "\n").encodeToByteArray() }
+        val complete = entries +
+            services.mapValues { (_, lines) -> (lines.sorted().joinToString("\n") + "\n").encodeToByteArray() } +
+            notices.mapValues { (_, texts) -> (texts.sorted().joinToString("\n\n") + "\n").encodeToByteArray() }
         writeZip(file, complete)
     }
 }

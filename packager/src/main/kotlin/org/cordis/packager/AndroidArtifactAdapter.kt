@@ -92,6 +92,7 @@ internal class AndroidArtifactAdapter(private val project: Project) : ArtifactAd
                 sharedPackages.set(variant.sharedPackages)
                 sharedClasses.set(variant.sharedClasses)
                 excludedPayloadPaths.set(variant.excludedPayloadPaths)
+                ignoreMultiReleaseEntries.set(variant.ignoreMultiReleaseEntries)
                 manifest.set(variant.androidManifest)
                 androidJar.set(library.sdkComponents.sdkDirectory.map { it.file("platforms/android-$compileSdk/android.jar") })
                 aapt2.set(tools.map { it.file(if (System.getProperty("os.name").startsWith("Windows")) "aapt2.exe" else "aapt2") })

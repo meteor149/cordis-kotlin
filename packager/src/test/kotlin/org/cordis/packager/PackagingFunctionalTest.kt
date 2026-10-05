@@ -69,6 +69,29 @@ class PackagingFunctionalTest {
     }
 
     @Test
+    fun contentVersionsTrackPayloadAndResolvedExtensionsDeterministically() {
+        fixture()
+        val build = File(directory, "build.gradle")
+        build.writeText(build.readText().replace("packageVersion = '1.2.3'", "packageVersion = '1.2.3'; contentVersion = true"))
+        val file = File(directory, "build/cordis/packages/example.demo-1.2.3.kplugin")
+        fun version() = PluginPackageArchive().inspect(file, packageFileSha256(file)).manifest.version
+        run("packagePlugins")
+        val first = version()
+        assertTrue(first.matches(Regex("1\\.2\\.3\\+content\\.[a-f0-9]{64}")))
+        val digest = packageFileSha256(file)
+        run("packagePlugins", "--rerun-tasks")
+        assertEquals(first, version())
+        assertEquals(digest, packageFileSha256(file))
+        File(directory, "extensions.json").writeText("""{"example":{"abi":"second"}}""")
+        run("packagePlugins")
+        val second = version()
+        assertTrue(first != second)
+        writeZip(File(directory, "input.jar"), mapOf("example/Entry.class" to byteArrayOf(2)))
+        run("packagePlugins")
+        assertTrue(second != version())
+    }
+
+    @Test
     fun bundleConsumesPublishedPackageAndRemovesStaleFiles() {
         fixture("""
             def incoming = configurations.create('bundled') {
