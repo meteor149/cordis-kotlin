@@ -81,6 +81,10 @@ deployment or native plugin loading added by this module.
 
 ## Build-tool entry point
 
+Gradle consumers can use the optional [packager](../packager/README.md) plugin for typed,
+cacheable archive tasks, KMP JVM/Android artifact preparation, and bundle catalogs. It
+depends on this module; this module does not depend on Gradle or an application SDK.
+
 From this repository run `:packages:packPlugin` with `-PpackageManifest=<plugin.json>`,
 `-PpackagePayload=<directory>` and `-PpackageOutput=<output.kplugin>`, using
 `--no-configuration-cache`. The manifest template lists payload paths; its valid placeholder

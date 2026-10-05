@@ -3,6 +3,8 @@ import org.gradle.api.tasks.testing.logging.TestExceptionFormat
 
 plugins {
     kotlin("multiplatform") version "2.1.21" apply false
+    kotlin("jvm") version "2.1.21" apply false
+    kotlin("plugin.sam.with.receiver") version "2.1.21" apply false
     kotlin("plugin.serialization") version "2.1.21" apply false
     id("com.android.library") version "8.10.0" apply false
     id("com.vanniktech.maven.publish") version "0.34.0" apply false
@@ -13,10 +15,9 @@ allprojects {
     version = "0.0.1-SNAPSHOT"
 }
 
-subprojects {
+configure(subprojects.filter { it.name != "packager" }) {
     apply(plugin = "org.jetbrains.kotlin.multiplatform")
     apply(plugin = "com.android.library")
-    apply(plugin = "com.vanniktech.maven.publish")
 
     extensions.configure<org.jetbrains.kotlin.gradle.dsl.KotlinMultiplatformExtension> {
         compilerOptions {
@@ -74,6 +75,10 @@ subprojects {
             exceptionFormat = TestExceptionFormat.FULL
         }
     }
+}
+
+subprojects {
+    apply(plugin = "com.vanniktech.maven.publish")
 
     val publicationGroup = group.toString()
     val publicationArtifactId = name
@@ -86,7 +91,13 @@ subprojects {
 
         pom {
             name.set("Cordis Kotlin - $publicationArtifactId")
-            description.set("A Kotlin Multiplatform implementation of Cordis.")
+            description.set(
+                if (project.name == "packager") {
+                    "A Gradle plugin for packaging Cordis JVM and Android plugins as .kplugin archives."
+                } else {
+                    "A Kotlin Multiplatform implementation of Cordis."
+                },
+            )
             inceptionYear.set("2021")
             url.set("https://github.com/meteor149/cordis-kotlin")
 
@@ -117,5 +128,5 @@ subprojects {
 
 tasks.register("test") {
     group = "verification"
-    dependsOn(subprojects.map { "${it.path}:jvmTest" })
+    dependsOn(subprojects.map { "${it.path}:${if (it.name == "packager") "test" else "jvmTest"}" })
 }

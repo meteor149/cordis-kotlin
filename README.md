@@ -37,6 +37,12 @@ Linux distribution and system feature constraints, and verified offline archive 
 Application SDK compatibility, publisher
 trust, configuration and installation transactions remain the host's responsibility.
 
+The optional [packager](packager/README.md) Gradle plugin (`io.github.meteor149.cordis.packager`) lets each
+KMP module declare independent releases. It prepares JVM JARs and Android plugin APKs from
+existing compilation outputs, builds `.kplugin` archives, and exposes them as Gradle artifacts
+for product bundles to collect. Android libraries do not need separate application wrapper
+projects. Application SDK metadata and default composition remain consumer-owned.
+
 The desktop loader runs Cordis plugins from verified JARs in an application-controlled directory.
 
 - Plugin code, resources, private JAR dependencies, and JNI libraries are isolated per generation.

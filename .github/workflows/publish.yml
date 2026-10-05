@@ -3,6 +3,14 @@ name: Publish to Maven Central
 on:
   workflow_dispatch:
     inputs:
+      publish_target:
+        description: Publications to upload
+        required: true
+        type: choice
+        default: all
+        options:
+          - all
+          - packager-snapshot
       run_tests:
         description: Run the JVM test suite before publishing
         required: true
@@ -16,8 +24,10 @@ permissions:
 
 jobs:
   publish:
-    name: Publish release
+    name: Publish Maven artifacts
     runs-on: macos-latest
+    env:
+      PUBLISH_TARGET: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_target || 'all' }}
 
     steps:
       - name: Check out repository
@@ -35,10 +45,23 @@ jobs:
 
       - name: Run tests
         if: github.event_name == 'release' || inputs.run_tests
-        run: ./gradlew :test --no-configuration-cache
+        run: |
+          if [[ "$PUBLISH_TARGET" == "packager-snapshot" ]]; then
+            ./gradlew :packager:test :packager:validatePlugins :packages:jvmTest --no-configuration-cache
+          else
+            ./gradlew :test --no-configuration-cache
+          fi
 
       - name: Publish to Maven Central
-        run: ./gradlew publishToMavenCentral --no-configuration-cache
+        run: |
+          if [[ "$PUBLISH_TARGET" == "packager-snapshot" ]]; then
+            ./gradlew :packager:publishToMavenCentral \
+              :packages:publishKotlinMultiplatformPublicationToMavenCentralRepository \
+              :packages:publishJvmPublicationToMavenCentralRepository \
+              --no-configuration-cache
+          else
+            ./gradlew publishToMavenCentral --no-configuration-cache
+          fi
         env:
           ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
           ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}

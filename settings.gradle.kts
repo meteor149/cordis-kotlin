@@ -27,4 +27,5 @@ include(
     "include",
     "hmr",
     "packages",
+    "packager",
 )
