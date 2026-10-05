@@ -84,7 +84,7 @@ class EffectHandle internal constructor(
             try {
                 disposable.dispose()
             } catch (error: Throwable) {
-                if (failure == null) failure = error else failure!!.addSuppressed(error)
+                if (failure == null) failure = error else if (failure !== error) failure!!.addSuppressed(error)
             }
         }
         if (failure == null) {
@@ -151,6 +151,7 @@ class Fiber<C> internal constructor(
     private var loaded = false
     private var application: Job? = null
     private val errorRef = atomic<Throwable?>(null)
+    private val cleanupFailure = atomic<Throwable?>(null)
     private var error: Throwable?
         get() = errorRef.value
         set(value) { errorRef.value = value }
@@ -299,6 +300,10 @@ class Fiber<C> internal constructor(
     }
 
     internal fun refresh() {
+        if (cleanupFailure.value != null) {
+            setEpoch(INACTIVE)
+            return
+        }
         val snapshot = synchronized(dependencyLock) { candidates.toMap() }
         var epoch = ""
         inject.keys.forEach { name ->
@@ -344,6 +349,7 @@ class Fiber<C> internal constructor(
                     unload()
                     loaded = false
                     loadedEpoch = INACTIVE
+                    if (cleanupFailure.value != null) synchronized(transitionLock) { desiredEpoch = INACTIVE }
                     continue
                 }
 
@@ -430,7 +436,12 @@ class Fiber<C> internal constructor(
             }
         }
         synchronized(serviceLock) { serviceStore = null }
-        if (failures.size > 1) failures.drop(1).forEach(failures[0]::addSuppressed)
+        val failure = failures.firstOrNull() ?: return
+        failures.drop(1).filter { it !== failure }.forEach(failure::addSuppressed)
+        cleanupFailure.value = failure
+        val allocationFailure = error
+        if (allocationFailure == null) error = failure
+        else if (allocationFailure !== failure) allocationFailure.addSuppressed(failure)
     }
 
     private fun derivedState(): FiberState = when {
@@ -474,7 +485,10 @@ class Fiber<C> internal constructor(
     }
 
     private suspend fun disposeInternal() {
-        if (uid == null) return
+        if (uid == null) {
+            cleanupFailure.value?.let { throw it }
+            return
+        }
         uid = null
         ctx.emitEvent(CoreEvents.Plugin, this)
         runtime?.let { current ->
@@ -484,12 +498,14 @@ class Fiber<C> internal constructor(
         setEpoch(INACTIVE)
         awaitSettled()
         if (state != FiberState.DISPOSED) updateState(FiberState.DISPOSED)
+        cleanupFailure.value?.let { throw it }
     }
 
     suspend fun restart() {
         assertActive()
         setEpoch(INACTIVE)
         awaitSettled()
+        cleanupFailure.value?.let { throw it }
         inject.keys.forEach(::checkBinding)
         refresh()
         await()
@@ -497,6 +513,7 @@ class Fiber<C> internal constructor(
 
     suspend fun update(config: C, noSave: Boolean = false) {
         assertActive()
+        cleanupFailure.value?.let { throw it }
         val current = checkNotNull(runtime)
         val validator = current.plugin.config
         val nextConfig = validator?.validate(config) ?: config

@@ -217,17 +217,83 @@ class FiberLifecycleTest {
     }
 
     @Test
-    fun `disposer failure is logged and fiber still reaches disposed`() = runBlocking {
+    fun `disposer failure is logged propagated and fiber still reaches disposed`(): Unit = runBlocking {
         val root = Context()
         val subject = plugin<Unit>(name = "bad-dispose") { _, _ ->
             collect { error("dispose failure") }
         }
         val fiber = root.plugin(subject, Unit).await()
-        fiber.dispose()
+        assertFailsWith<IllegalStateException> { fiber.dispose() }
         assertEquals(FiberState.DISPOSED, fiber.state)
         assertTrue(root.logger.buffer.any { message ->
             message.args.any { it is IllegalStateException && it.message == "dispose failure" }
         })
+        assertFailsWith<IllegalStateException> { fiber.dispose() }
+    }
+
+    @Test
+    fun `failed retirement attempts all releases and prevents update allocation`(): Unit = runBlocking {
+        val root = Context()
+        val trace = mutableListOf<String>()
+        var allocations = 0
+        val first = IllegalStateException("first cleanup")
+        val second = IllegalArgumentException("second cleanup")
+        val subject = plugin<Int>(name = "retirement-failure") { _, _ ->
+            allocations++
+            collect { trace += "one"; throw first }
+            collect { trace += "two"; throw second }
+            collect { trace += "three" }
+        }
+        val fiber = root.plugin(subject, 1).await()
+        val failure = assertFailsWith<IllegalArgumentException> { fiber.update(2) }
+        assertSame(second, failure)
+        assertTrue(failure.suppressedExceptions.any { it === first })
+        assertEquals(setOf("one", "two", "three"), trace.toSet())
+        assertEquals(3, trace.size)
+        assertEquals(1, allocations)
+        assertEquals(FiberState.FAILED, fiber.state)
+        assertFailsWith<IllegalArgumentException> { fiber.update(3) }
+        assertEquals(1, allocations)
+        assertFailsWith<IllegalArgumentException> { fiber.dispose() }
+        assertEquals(FiberState.DISPOSED, fiber.state)
+    }
+
+    @Test
+    fun `dependency recovery cannot reactivate a consumer whose cleanup failed`(): Unit = runBlocking {
+        val root = Context()
+        val key = ServiceKey<String>("failed-consumer-dependency")
+        val failure = IllegalStateException("consumer cleanup")
+        var allocations = 0
+        val provider = plugin<Unit> { ctx, _ -> ctx.provide(key, "available") }
+        val consumer = plugin<Unit>(inject = dependencies(key)) { _, _ ->
+            allocations++
+            collect { throw failure }
+        }
+        val first = root.plugin(provider, Unit).await()
+        val fiber = root.plugin(consumer, Unit).await()
+        assertSame(failure, assertFailsWith<IllegalStateException> { first.dispose() })
+        assertSame(failure, assertFailsWith<IllegalStateException> { fiber.await() })
+        val replacement = root.plugin(provider, Unit).await()
+        assertSame(failure, assertFailsWith<IllegalStateException> { fiber.await() })
+        assertEquals(1, allocations)
+        assertEquals(FiberState.FAILED, fiber.state)
+        assertSame(failure, assertFailsWith<IllegalStateException> { replacement.dispose() })
+        assertSame(failure, assertFailsWith<IllegalStateException> { fiber.dispose() })
+    }
+
+    @Test
+    fun `allocation failure keeps its cause when partial cleanup also fails`(): Unit = runBlocking {
+        val root = Context()
+        val allocation = IllegalStateException("allocation")
+        val cleanup = IllegalArgumentException("partial cleanup")
+        val subject = plugin<Unit> { _, _ ->
+            collect { throw cleanup }
+            throw allocation
+        }
+        val fiber = root.plugin(subject, Unit)
+        assertSame(allocation, assertFailsWith<IllegalStateException> { fiber.await() })
+        assertTrue(allocation.suppressedExceptions.any { it === cleanup })
+        assertSame(cleanup, assertFailsWith<IllegalArgumentException> { fiber.dispose() })
     }
 
     @Test

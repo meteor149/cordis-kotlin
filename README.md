@@ -70,6 +70,15 @@ allocation job. Dependency relocation retains its existing wait-for-load behavio
 should allocate resources during `apply`, collect every disposer, and keep allocation
 cancellable; blocking platform calls still require their own cancellation strategy.
 
+Fiber retirement attempts every collected disposer and propagates cleanup failures to
+`dispose`, `restart`, `update` and subsequent `await` calls. Failed cleanup prevents automatic
+reactivation, including when a missing dependency returns. Explicit disposal still reaches
+Disposed and repeated disposal reports the retained failure without rerunning releases.
+Allocation failures retain their original cause, with partial-cleanup errors suppressed.
+Hosts must treat uncertain retirement as a recovery boundary rather than allocate an overlapping
+replacement. A failed disposer is not automatically retried; recovery may require restarting
+the process or an application-specific resource recovery mechanism.
+
 The Android loader runs Cordis plugins from APK, JAR, or dex files in the app's private storage.
 
 - Plugin implementation classes use an isolated, child-first class loader.
