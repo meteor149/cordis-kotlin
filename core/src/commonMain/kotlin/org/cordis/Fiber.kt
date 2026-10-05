@@ -7,6 +7,8 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.supervisorScope
 import kotlinx.atomicfu.atomic
 import kotlinx.atomicfu.locks.SynchronizedObject
 import kotlinx.atomicfu.locks.synchronized
@@ -147,6 +149,7 @@ class Fiber<C> internal constructor(
     private var desiredEpoch = INACTIVE
     private var loadedEpoch = INACTIVE
     private var loaded = false
+    private var application: Job? = null
     private val errorRef = atomic<Throwable?>(null)
     private var error: Throwable?
         get() = errorRef.value
@@ -311,14 +314,20 @@ class Fiber<C> internal constructor(
 
     private fun setEpoch(epoch: String) {
         var start: Job? = null
+        var cancelApplication: Job? = null
         synchronized(transitionLock) {
-            if (epoch == desiredEpoch) return
+            // Explicit withdrawal must abort allocation, while dependency relocation
+            // retains its existing wait-for-load semantics. Never cancel the transition
+            // itself: it owns suspending resource cleanup after allocation stops.
+            if (uid == null && epoch == INACTIVE) cancelApplication = application
+            if (epoch == desiredEpoch) return@synchronized
             desiredEpoch = epoch
             if (inertia == null) {
                 start = ctx.scope.launch(start = CoroutineStart.LAZY) { transitionLoop() }
                 inertia = start
             }
         }
+        cancelApplication?.cancel()
         start?.start()
     }
 
@@ -359,9 +368,22 @@ class Fiber<C> internal constructor(
                             },
                             active = { synchronized(transitionLock) { desiredEpoch == target } },
                         )
-                        currentRuntime.plugin.apply(ctx, config, effect)
+                        supervisorScope {
+                            val task = async(start = CoroutineStart.LAZY) { currentRuntime.plugin.apply(ctx, config, effect) }
+                            val disposed = synchronized(transitionLock) {
+                                application = task
+                                uid == null
+                            }
+                            try {
+                                if (disposed) task.cancel() else task.start()
+                                task.await()
+                            } finally {
+                                synchronized(transitionLock) { if (application === task) application = null }
+                            }
+                        }
                     }
                 } catch (cause: Throwable) {
+                    if (cause is CancellationException && uid == null) continue
                     ctx.logger().error(cause)
                     error = cause
                     synchronized(transitionLock) { desiredEpoch = INACTIVE }

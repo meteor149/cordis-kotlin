@@ -8,6 +8,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.withTimeout
 import org.junit.jupiter.api.Test
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
@@ -19,6 +21,63 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class FiberLifecycleTest {
+    @Test
+    fun `explicit withdrawal cancels allocation whose dependency was already withdrawn`() = runBlocking {
+        val root = Context()
+        val dependency = ServiceKey<Int>("cancel-already-pending")
+        val provision = root.provide(dependency, 1)
+        val loading = CompletableDeferred<Unit>()
+        var released = false
+        val subject = plugin<Unit>(name = "cancel-already-inactive", inject = dependencies(dependency)) { _, _ ->
+            collect { released = true }
+            loading.complete(Unit)
+            awaitCancellation()
+        }
+        val fiber = root.plugin(subject, Unit)
+        withTimeout(5_000) {
+            loading.await()
+            val withdrawal = async { provision.dispose() }
+            while (root[dependency] != null) delay(1)
+            fiber.dispose()
+            withdrawal.await()
+        }
+        assertTrue(released)
+        assertEquals(FiberState.DISPOSED, fiber.state)
+    }
+
+    @Test
+    fun `explicit withdrawal cancels suspended allocation and joins uncancelled cleanup`() = runBlocking {
+        val root = Context()
+        val loading = CompletableDeferred<Unit>()
+        val cleaning = CompletableDeferred<Unit>()
+        val releaseCleanup = CompletableDeferred<Unit>()
+        var releases = 0
+        val subject = plugin<Unit>(name = "cancel-suspended-apply") { _, _ ->
+            collect {
+                cleaning.complete(Unit)
+                releaseCleanup.await()
+                releases++
+            }
+            loading.complete(Unit)
+            awaitCancellation()
+        }
+        val fiber = root.plugin(subject, Unit)
+        withTimeout(5_000) {
+            loading.await()
+            val disposal = async { fiber.dispose() }
+            try {
+                cleaning.await()
+                assertFalse(disposal.isCompleted)
+            } finally { releaseCleanup.complete(Unit) }
+            disposal.await()
+            fiber.await()
+        }
+        assertEquals(1, releases)
+        assertNull(fiber.uid)
+        assertEquals(FiberState.DISPOSED, fiber.state)
+        assertEquals(0, root.registry.size)
+    }
+
     @Test
     fun `concurrent plugin creation cannot orphan a runtime`() = runBlocking {
         val root = Context()

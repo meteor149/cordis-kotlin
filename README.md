@@ -59,6 +59,12 @@ details.
 
 ## Android dynamic loading
 
+Explicit Fiber withdrawal cancels a suspended plugin `apply` operation and waits for its
+collected resource cleanup. Cleanup runs in the transition owner rather than the cancelled
+allocation job. Dependency relocation retains its existing wait-for-load behavior. Plugins
+should allocate resources during `apply`, collect every disposer, and keep allocation
+cancellable; blocking platform calls still require their own cancellation strategy.
+
 The Android loader runs Cordis plugins from APK, JAR, or dex files in the app's private storage.
 
 - Plugin implementation classes use an isolated, child-first class loader.
