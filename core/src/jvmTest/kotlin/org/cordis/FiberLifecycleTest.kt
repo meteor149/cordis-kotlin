@@ -19,8 +19,19 @@ import kotlin.test.assertFalse
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.test.assertSame
 
 class FiberLifecycleTest {
+    @Test
+    fun `allocation failure retains provider identity across repeated await`() = runBlocking {
+        val root = Context()
+        val failure = IllegalStateException("original allocation failure")
+        val subject = plugin<Unit>(name = "original-allocation-failure") { _, _ -> throw failure }
+        val fiber = root.plugin(subject, Unit)
+        repeat(2) { assertSame(failure, assertFailsWith<IllegalStateException> { fiber.await() }) }
+        fiber.dispose()
+    }
+
     @Test
     fun `explicit withdrawal cancels allocation whose dependency was already withdrawn`() = runBlocking {
         val root = Context()

@@ -368,19 +368,28 @@ class Fiber<C> internal constructor(
                             },
                             active = { synchronized(transitionLock) { desiredEpoch == target } },
                         )
-                        supervisorScope {
-                            val task = async(start = CoroutineStart.LAZY) { currentRuntime.plugin.apply(ctx, config, effect) }
+                        val allocationFailure = supervisorScope {
+                            val failure = atomic<Throwable?>(null)
+                            // Transfer allocation failures as values. Deferred.await may clone
+                            // exceptions for stack recovery; Fiber must retain the provider's
+                            // original failure for repeated await and suppressed-error handling.
+                            val task = async(start = CoroutineStart.LAZY) {
+                                try { currentRuntime.plugin.apply(ctx, config, effect) }
+                                catch (cause: Throwable) { failure.value = cause }
+                            }
                             val disposed = synchronized(transitionLock) {
                                 application = task
                                 uid == null
                             }
                             try {
                                 if (disposed) task.cancel() else task.start()
-                                task.await()
+                                try { task.await() } catch (cause: Throwable) { failure.compareAndSet(null, cause) }
+                                failure.value
                             } finally {
                                 synchronized(transitionLock) { if (application === task) application = null }
                             }
                         }
+                        allocationFailure?.let { throw it }
                     }
                 } catch (cause: Throwable) {
                     if (cause is CancellationException && uid == null) continue
