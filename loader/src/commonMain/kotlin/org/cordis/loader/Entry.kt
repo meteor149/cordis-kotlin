@@ -62,6 +62,9 @@ class Entry(val loader: Loader) {
     var fiber: Fiber<Any?>? = null
     lateinit var parent: EntryGroup
     lateinit var options: EntryOptions
+    internal val hasOptions: Boolean get() = this::options.isInitialized
+    internal var disposingForUpdate: Boolean = false
+        private set
     var subgroup: EntryGroup? = null
     var subtree: EntryTree? = null
     var realm: LocalRealm? = null
@@ -106,6 +109,17 @@ class Entry(val loader: Loader) {
         val changed = force || configChanged || options.id != previous.id || options.name != previous.name ||
             options.group != previous.group || options.disabled != previous.disabled || options.inject != previous.inject ||
             options.intercept != previous.intercept || options.isolate != previous.isolate
+        if (fiber?.uid != null && (options.name != previous.name || options.group != previous.group)) {
+            disposingForUpdate = true
+            try {
+                fiber?.dispose()
+            } finally {
+                disposingForUpdate = false
+            }
+            fiber = null
+            subgroup = null
+            subtree = null
+        }
         if (disabled) {
             fiber?.dispose(); fiber = null
             return
@@ -115,7 +129,8 @@ class Entry(val loader: Loader) {
         }
         patchContext()
         if (fiber?.uid != null && changed && (configChanged || options.group == true)) {
-            fiber!!.update(resolveConfig())
+            fiber!!.update(resolveConfig(), noSave = loader.transactionActive)
+            if (loader.transactionActive) fiber!!.await()
         } else if (fiber?.uid == null) {
             init()
         }
@@ -206,6 +221,7 @@ class Entry(val loader: Loader) {
         val loaded = try {
             parent.tree.import(options.name)
         } catch (error: Throwable) {
+            if (loader.transactionActive) throw error
             ctx.logger().error(error)
             return
         }

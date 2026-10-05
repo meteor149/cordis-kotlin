@@ -15,7 +15,8 @@ same interpreter. `IncludeConfig.layered` disables runtime tree write-back to th
 file, preserving the distinction between source layers and their expanded result.
 
 Use `CompositionResult.requireValid()` for strict preflight. Include retains warning-based
-handling for legacy invalid targets. Tree transaction and committed file publication are
-separate concerns; the legacy EntryGroup update is not an atomic application boundary.
+handling for legacy invalid targets. Include now applies candidates through the strict
+Loader tree transaction and publishes parsed content only after application succeeds.
+The legacy direct EntryGroup update remains a best-effort low-level API.
 
 Validation: `gradlew.bat :include:jvmTest` (JDK 21).

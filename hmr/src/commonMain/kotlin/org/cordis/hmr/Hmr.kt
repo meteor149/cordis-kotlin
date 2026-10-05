@@ -137,7 +137,9 @@ class Hmr(private val context: Context, val config: HmrConfig) : Service<Unit>(c
         }
     }
 
-    suspend fun partialReload(): Boolean {
+    suspend fun partialReload(): Boolean = loader.withMutation { partialReloadLocked() }
+
+    private suspend fun partialReloadLocked(): Boolean {
         val changes = synchronized(lock) {
             scheduled = null
             stashed.toSet().also(stashed::removeAll)

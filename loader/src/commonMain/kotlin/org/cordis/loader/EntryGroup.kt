@@ -14,7 +14,18 @@ open class EntryGroup(val ctx: Context, val tree: EntryTree) {
         val entry = tree.store.getOrPut(id) { Entry(loader()) }
         entry.parent = this
         entry.rebase(ctx)
-        entry.update(options, create = true, force = true)
+        if (!entry.hasOptions) entry.update(options, create = true, force = true) else {
+            entry.update(EntryPatch(
+                name = changeTo(options.name),
+                config = changeTo(options.config),
+                group = changeTo(options.group),
+                disabled = changeTo(options.disabled),
+                inject = changeTo(options.inject),
+                intercept = changeTo(options.intercept),
+                isolate = changeTo(options.isolate),
+            ), force = true)
+            entry.options.extra = options.extra
+        }
         return entry.id
     }
 
@@ -33,6 +44,11 @@ open class EntryGroup(val ctx: Context, val tree: EntryTree) {
     suspend fun update(config: List<EntryOptions>) {
         val oldIds = data.map { it.id }.toSet()
         data = config.toMutableList()
+        if (loader().transactionActive) {
+            (oldIds - config.map { it.id }.toSet()).forEach { remove(it) }
+            config.forEach { create(it) }
+            return
+        }
         config.forEach { options ->
             try {
                 create(options)

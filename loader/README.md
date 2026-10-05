@@ -1,5 +1,24 @@
 # Cordis Loader
 
+## Host-coordinated tree transactions
+
+`tree.withTreeTransaction(entries) { publish() }` prepares module identities, applies the
+complete candidate tree and calls the host's atomic durable publisher while rollback is
+still possible. An import failure is rejected before withdrawal. Application or publication
+failure restores previous entry metadata and registrations; mutable provider instance state
+and external side effects are not restored. Nested failures propagate instead of being logged
+and ignored. Missing required services remain pending and can recover when providers return.
+
+The publisher is the last fallible operation and runs without cancellation. It must publish
+atomically and must not reenter the same Loader. Once publication succeeds the candidate is
+committed. Cleanup callbacks must not close their owning runtime during this operation.
+`applyTree(entries)` is the convenience form without an external publisher.
+
+Module HMR and these tree transactions share `Loader.withMutation`. Low-level direct tree
+mutation APIs remain caller-coordinated; hosts should use the transaction API for complete
+compositions. Rollback attempts all root restorations and attaches additional failures to
+the original exception; callers must treat failed rollback as a degraded runtime.
+
 ## Desktop JVM plugin JARs
 
 `JvmModuleLoader` loads independently built Cordis plugins from JAR files already installed below

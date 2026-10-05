@@ -20,6 +20,8 @@ import kotlinx.serialization.json.longOrNull
 import kotlinx.atomicfu.atomic
 import kotlinx.atomicfu.locks.SynchronizedObject
 import kotlinx.atomicfu.locks.synchronized
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.cordis.Context
 import org.cordis.CoreEvents
 import org.cordis.EffectScope
@@ -35,6 +37,7 @@ import org.cordis.loader.IsolationRule
 import org.cordis.loader.Loader
 import org.cordis.loader.LoaderEvents
 import org.cordis.loader.RefreshableEntryTree
+import org.cordis.loader.withTreeTransaction
 
 data class PatchOptions(
     val id: String? = null,
@@ -72,6 +75,7 @@ class Include(parent: Context, var config: IncludeConfig) : EntryTree(parent), R
         else -> throw IllegalArgumentException("extension \"${PlatformFileSystem.extension(filename)}\" not supported")
     }
     private val ioLock = SynchronizedObject()
+    private val updateLock = Mutex()
     private val readonlyRef = atomic(false)
     val readonly: Boolean get() = readonlyRef.value
     private var content: String? = null
@@ -88,19 +92,20 @@ class Include(parent: Context, var config: IncludeConfig) : EntryTree(parent), R
             val initial = config.initial ?: throw IllegalStateException("config file not found: $filename")
             writeFileNow(initial)
         }
-        read(forced = true)
-        root.update(applyPatches(synchronized(ioLock) { data.orEmpty().toMutableList() }))
+        refreshCandidate(forced = true)
     }
 
-    suspend fun updateConfig(next: IncludeConfig): Boolean {
-        if (next.path != synchronized(ioLock) { config.path }) return false
-        val current = synchronized(ioLock) {
-            config = next
-            enableLogs = next.enableLogs ?: enableLogs
-            data.orEmpty().toList()
+    suspend fun updateConfig(next: IncludeConfig): Boolean = updateLock.withLock {
+        if (next.path != synchronized(ioLock) { config.path }) return@withLock false
+        val current = synchronized(ioLock) { data.orEmpty().toList() }
+        val composed = interpret(current, next.patches.orEmpty())
+        withTreeTransaction(composed) {
+            synchronized(ioLock) {
+                config = next
+                enableLogs = next.enableLogs ?: enableLogs
+            }
         }
-        root.update(applyPatches(current.toMutableList()))
-        return true
+        true
     }
 
     private fun checkAccess() {
@@ -110,22 +115,37 @@ class Include(parent: Context, var config: IncludeConfig) : EntryTree(parent), R
     fun read(forced: Boolean = false): Boolean = synchronized(ioLock) {
         val next = PlatformFileSystem.readUtf8(filename)
         if (!forced && content == next) return@synchronized false
-        content = next
-        data = decode(next)
-        checkAccess()
+        // Read/parse preflight only. Committed state changes after tree application.
+        decode(next)
         true
     }
 
     fun applyPatches(input: MutableList<EntryOptions>): List<EntryOptions> {
         val patches = synchronized(ioLock) { config.patches.orEmpty() }
+        return interpret(input, patches)
+    }
+
+    private fun interpret(input: List<EntryOptions>, patches: List<PatchOptions>): List<EntryOptions> {
         val result = composeEntries(input, listOf(CompositionLayer(filename, patches)))
         result.diagnostics.forEach { warn(it.message) }
         return result.entries
     }
     suspend fun stop() = root.stop()
 
-    override suspend fun refresh() {
-        if (read()) root.update(applyPatches(synchronized(ioLock) { data.orEmpty().toMutableList() }))
+    override suspend fun refresh() = refreshCandidate(forced = false)
+
+    private suspend fun refreshCandidate(forced: Boolean) = updateLock.withLock {
+        val next = PlatformFileSystem.readUtf8(filename)
+        if (!forced && synchronized(ioLock) { content == next }) return@withLock
+        val parsed = decode(next)
+        val patches = synchronized(ioLock) { config.patches.orEmpty() }
+        withTreeTransaction(interpret(parsed, patches)) {
+            synchronized(ioLock) {
+                content = next
+                data = parsed
+                checkAccess()
+            }
+        }
     }
 
     private fun writeFileNow(entries: List<EntryOptions>) = synchronized(ioLock) {
@@ -137,7 +157,7 @@ class Include(parent: Context, var config: IncludeConfig) : EntryTree(parent), R
     }
 
     override fun write() {
-        if (config.layered) return
+        if (config.layered || ctx[Loader.Key]?.transactionActive == true) return
         ctx.emitEvent(LoaderEvents.ConfigUpdate, Unit)
         // Config files are intentionally small. A synchronous atomic replace
         // prevents the owner from being disposed while a background write is
