@@ -66,6 +66,10 @@ val androidSdk = providers.environmentVariable("ANDROID_HOME")
 
 tasks.test {
     useJUnitPlatform()
+    testLogging {
+        events("passed", "skipped", "failed")
+        exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+    }
     systemProperty("cordis.test.androidSdk", androidSdk.getOrElse(""))
     systemProperty("cordis.test.gradleUserHome", gradle.gradleUserHomeDir.absolutePath)
     // Nested builds run offline against the same Gradle cache.
