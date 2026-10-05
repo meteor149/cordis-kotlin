@@ -56,8 +56,29 @@ suspend fun <T> EntryTree.withTreeTransaction(
     }
     prepare(next)
     val previous = root.data.map(::detachedEntryOptions)
+    fun parentIndex(items: List<EntryOptions>): Map<String, String?> {
+        val parents = linkedMapOf<String, String?>()
+        fun visit(entries: List<EntryOptions>, parent: String?) {
+            entries.forEach { entry ->
+                parents[entry.id] = parent
+                if (entry.group == true) visit((entry.config as List<*>).map { it as EntryOptions }, entry.id)
+            }
+        }
+        visit(items, null)
+        return parents
+    }
+    val previousParents = parentIndex(previous)
+    val nextParents = parentIndex(next)
     loader.transactionActive = true
     try {
+        // Retire moved branches before either group updates. Otherwise a later source update
+        // can remove the destination's entry with the same ID. Reallocation owns the new realm;
+        // a same-parent reorder retains the existing effects and resources.
+        previousParents.forEach { (id, parent) ->
+            if (id in nextParents && nextParents[id] != parent) {
+                store[id]?.let { entry -> entry.parent.remove(entry.options.id) }
+            }
+        }
         root.update(next)
         await()
         entries().forEach {

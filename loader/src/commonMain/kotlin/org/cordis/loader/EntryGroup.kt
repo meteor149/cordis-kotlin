@@ -1,7 +1,10 @@
 package org.cordis.loader
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import org.cordis.Context
+import org.cordis.FiberState
 
 open class EntryGroup(val ctx: Context, val tree: EntryTree) {
     var data: MutableList<EntryOptions> = mutableListOf()
@@ -61,7 +64,29 @@ open class EntryGroup(val ctx: Context, val tree: EntryTree) {
         (oldIds - config.map { it.id }.toSet()).forEach { remove(it) }
     }
 
-    suspend fun stop() { data.toList().forEach { remove(it.id, true) } }
+    suspend fun stop(): Unit = withContext(NonCancellable) {
+        var failure: Throwable? = null
+        suspend fun release(action: suspend () -> Unit) {
+            try { action() }
+            catch (error: Throwable) {
+                if (failure == null) failure = error else if (failure !== error) failure!!.addSuppressed(error)
+            }
+        }
+        suspend fun abortAllocations(group: EntryGroup) {
+            group.data.toList().forEach { options ->
+                val entry = group.tree.store[options.id] ?: return@forEach
+                entry.subgroup?.let { abortAllocations(it) }
+                entry.subtree?.root?.let { abortAllocations(it) }
+                val fiber = entry.fiber
+                if (fiber?.state == FiberState.LOADING) release { fiber.dispose() }
+            }
+        }
+        // Provider withdrawal waits for dependent allocations. Abort every owned allocation
+        // before releasing any provider, otherwise a paused child can block the whole group.
+        abortAllocations(this@EntryGroup)
+        data.toList().forEach { options -> release { remove(options.id, true) } }
+        failure?.let { throw it }
+    }
 
     private fun loader(): Loader = ctx[Loader.Key] ?: tree as Loader
 }

@@ -11,6 +11,91 @@ import kotlin.test.assertTrue
 
 class CompositionTest {
     @Test
+    fun positionedInsertAndMovesComposeWithoutMutatingLayers() {
+        val base = listOf(EntryOptions("a", "module"), EntryOptions("b", "module"))
+        val group = EntryOptions("group", "group", group = true, config = emptyList<EntryOptions>())
+        val layer = CompositionLayer("user", listOf(
+            PatchOptions(insert = listOf(group), position = 1),
+            PatchOptions(id = "b", parent = changeTo("group"), position = 0),
+            PatchOptions(id = "group", insert = listOf(EntryOptions("c", "module")), position = 0),
+            PatchOptions(id = "b", config = changeTo("moved")),
+            PatchOptions(id = "a", parent = changeTo(null), position = -1),
+        ))
+        val result = composeEntries(base, listOf(layer)).requireValid()
+        assertEquals(listOf("a", "group"), result.entries.map { it.id })
+        val nested = (result.entries.last().config as List<*>).filterIsInstance<EntryOptions>()
+        assertEquals(listOf("c", "b"), nested.map { it.id })
+        assertEquals("moved", nested.last().config)
+        assertEquals(CompositionOrigin("user", 1), result.origins["b"]?.get("parent"))
+        assertEquals(CompositionOrigin("user", 4), result.origins["a"]?.get("position"))
+        assertEquals(listOf("a", "b"), base.map { it.id })
+        assertNull(base.last().config)
+        assertEquals(emptyList<EntryOptions>(), group.config)
+        assertEquals(result.entries, composeEntries(base, listOf(layer)).requireValid().entries)
+        assertEquals(base, composeEntries(base, emptyList()).requireValid().entries)
+    }
+
+    @Test
+    fun groupMovesRetainChildrenAndCanBePatchedAndMovedBackToRoot() {
+        val inner = EntryOptions("inner", "group", group = true, config = listOf(EntryOptions("leaf", "module")))
+        val outer = EntryOptions("outer", "group", group = true, config = emptyList<EntryOptions>())
+        val result = composeEntries(listOf(inner, outer), listOf(CompositionLayer("user", listOf(
+            PatchOptions(id = "inner", parent = changeTo("outer")),
+            PatchOptions(id = "leaf", disabled = changeTo(true)),
+            PatchOptions(id = "inner", parent = changeTo(null), position = 0),
+        )))).requireValid()
+        assertEquals(listOf("inner", "outer"), result.entries.map { it.id })
+        assertEquals(emptyList<EntryOptions>(), result.entries.last().config)
+        assertTrue(((result.entries.first().config as List<*>).single() as EntryOptions).disabled == true)
+    }
+
+    @Test
+    fun movesRejectMissingParentsNonGroupsAndCyclesBeforeChangingStructure() {
+        val base = listOf(EntryOptions("group", "group", group = true, config = listOf(
+            EntryOptions("nested", "group", group = true, config = emptyList<EntryOptions>()),
+        )), EntryOptions("leaf", "module"))
+        val result = composeEntries(base, listOf(CompositionLayer("user", listOf(
+            PatchOptions(id = "group", parent = changeTo("nested")),
+            PatchOptions(id = "group", parent = changeTo("group")),
+            PatchOptions(id = "leaf", parent = changeTo("absent")),
+            PatchOptions(id = "nested", parent = changeTo("leaf")),
+            PatchOptions(id = "absent", parent = changeTo(null)),
+        ))))
+        assertEquals(base, result.entries)
+        assertEquals(listOf(0, 1, 2, 3, 4), result.diagnostics.map { it.operation })
+        assertFailsWith<IllegalArgumentException> { result.requireValid() }
+    }
+
+    @Test
+    fun sameParentPositionsUsePostRemovalSpliceBounds() {
+        val base = listOf("a", "b", "c").map { EntryOptions(it, "module") }
+        fun move(target: String, position: Int) = composeEntries(base, listOf(CompositionLayer("user", listOf(
+            PatchOptions(id = target, position = position),
+        )))).requireValid().entries.map { it.id }
+        assertEquals(listOf("b", "a", "c"), move("a", -1))
+        assertEquals(listOf("c", "a", "b"), move("c", Int.MIN_VALUE))
+        assertEquals(listOf("b", "c", "a"), move("a", Int.MAX_VALUE))
+    }
+
+    @Test
+    fun contradictoryStructuralPatchesAndInvalidAncestryRemainDiagnosable() {
+        val base = listOf(EntryOptions("a", "module"))
+        val result = composeEntries(base, listOf(CompositionLayer("user", listOf(
+            PatchOptions(id = "a", remove = true, position = 0),
+            PatchOptions(insert = listOf(EntryOptions("b", "module")), parent = changeTo(null)),
+        ))))
+        assertEquals(base, result.entries)
+        assertEquals(2, result.diagnostics.size)
+        val duplicate = EntryOptions("group", "group", group = true, config = listOf(
+            EntryOptions("group", "group", group = true, config = emptyList<EntryOptions>()),
+        ))
+        val invalid = composeEntries(listOf(duplicate) + base, listOf(CompositionLayer("user", listOf(
+            PatchOptions(id = "a", parent = changeTo("group")),
+        ))))
+        assertTrue(invalid.diagnostics.any { it.message.contains("ancestry") })
+    }
+
+    @Test
     fun insertedEntriesCanBeConfiguredByLaterLayersWithoutMutatingSources() {
         val entry = EntryOptions(id = "model", name = "model", config = mapOf("temperature" to 1))
         val bundle = CompositionLayer("bundle", listOf(PatchOptions(insert = listOf(entry))))

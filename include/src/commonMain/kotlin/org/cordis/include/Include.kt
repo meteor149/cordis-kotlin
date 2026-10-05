@@ -52,6 +52,10 @@ data class PatchOptions(
     val extra: Map<String, Any?> = emptyMap(),
     val remove: Boolean = false,
     val replacement: String? = null,
+    /** Keep retains the current parent; Set(null) moves an entry to the root. */
+    val parent: FieldPatch<String?> = FieldPatch.Keep,
+    /** Index after removal; negative values count from the end, and out-of-range values clamp. */
+    val position: Int? = null,
 )
 
 /**

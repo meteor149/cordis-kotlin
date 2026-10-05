@@ -46,6 +46,7 @@ internal fun copyCompositionEntry(entry: EntryOptions): EntryOptions = entry.cop
 fun composeEntries(base: List<EntryOptions>, layers: List<CompositionLayer>): CompositionResult {
     val output = base.map(::copyCompositionEntry).toMutableList()
     val index = linkedMapOf<String, EntryOptions>()
+    val parents = linkedMapOf<String, EntryOptions?>()
     val diagnostics = mutableListOf<CompositionDiagnostic>()
     val origins = linkedMapOf<String, MutableMap<String, CompositionOrigin>>()
     fun report(source: CompositionOrigin, target: String?, message: String) {
@@ -55,18 +56,32 @@ fun composeEntries(base: List<EntryOptions>, layers: List<CompositionLayer>): Co
         if (entry.group == true) (entry.config as? List<*>)?.filterIsInstance<EntryOptions>().orEmpty() else emptyList()
     fun rebuild(source: CompositionOrigin) {
         index.clear()
-        fun visit(entries: List<EntryOptions>) {
+        parents.clear()
+        fun visit(entries: List<EntryOptions>, parent: EntryOptions?) {
             entries.forEach { entry ->
                 if (entry.id.isNotBlank()) {
                     if (index.put(entry.id, entry) != null) report(source, entry.id, "duplicate entry id '${entry.id}'")
+                    parents[entry.id] = parent
                 }
                 if (entry.group == true && (entry.config !is List<*> || (entry.config as List<*>).any { it !is EntryOptions })) {
                     report(source, entry.id, "group config must be an entry list")
                 }
-                visit(children(entry))
+                visit(children(entry), entry)
             }
         }
-        visit(output)
+        visit(output, null)
+    }
+    fun insertionIndex(size: Int, position: Int?): Int = when {
+        position == null -> size
+        position < 0 -> (size + position).coerceAtLeast(0)
+        else -> position.coerceAtMost(size)
+    }
+    fun writeChildren(parent: EntryOptions?, items: List<EntryOptions>, source: CompositionOrigin) {
+        if (parent == null) { output.clear(); output.addAll(items) }
+        else {
+            parent.config = items
+            origins.getOrPut(parent.id) { linkedMapOf() }["config"] = source
+        }
     }
     fun record(entry: EntryOptions, source: CompositionOrigin) {
         if (entry.id.isNotBlank()) origins[entry.id] = linkedMapOf("entry" to source)
@@ -79,14 +94,20 @@ fun composeEntries(base: List<EntryOptions>, layers: List<CompositionLayer>): Co
             val source = CompositionOrigin(layer.id, position)
             val inserted = patch.insert
             if (inserted != null) {
+                if (patch.parent is FieldPatch.Set || patch.remove) {
+                    report(source, patch.id, "insert cannot also move or remove an entry")
+                    return@forEachIndexed
+                }
                 val items = inserted.map(::copyCompositionEntry)
-                if (patch.id == null) output += items else {
+                if (patch.id == null) output.addAll(insertionIndex(output.size, patch.position), items) else {
                     val target = index[patch.id]
                     if (target == null || target.group != true) {
                         report(source, patch.id, if (target == null) "patch insert: entry '${patch.id}' not found" else "patch insert: entry '${patch.id}' is not a group")
                         return@forEachIndexed
                     }
-                    target.config = children(target) + items
+                    val nested = children(target).toMutableList()
+                    nested.addAll(insertionIndex(nested.size, patch.position), items)
+                    target.config = nested
                     origins.getOrPut(target.id) { linkedMapOf() }["config"] = source
                 }
                 items.forEach { record(it, source) }
@@ -103,6 +124,10 @@ fun composeEntries(base: List<EntryOptions>, layers: List<CompositionLayer>): Co
                 return@forEachIndexed
             }
             if (patch.remove) {
+                if (patch.parent is FieldPatch.Set || patch.position != null) {
+                    report(source, target.id, "remove cannot also move an entry")
+                    return@forEachIndexed
+                }
                 fun removeFrom(items: MutableList<EntryOptions>): Boolean {
                     if (items.remove(target)) return true
                     items.forEach { entry ->
@@ -121,6 +146,41 @@ fun composeEntries(base: List<EntryOptions>, layers: List<CompositionLayer>): Co
                 return@forEachIndexed
             }
             val fields = origins.getOrPut(target.id) { linkedMapOf() }
+            if (patch.parent is FieldPatch.Set || patch.position != null) {
+                val previousParent = parents[target.id]
+                val parentId = (patch.parent as? FieldPatch.Set)?.value
+                val nextParent = if (patch.parent is FieldPatch.Set) parentId?.let(index::get) else previousParent
+                if (patch.parent is FieldPatch.Set && parentId != null && nextParent == null) {
+                    report(source, target.id, "patch move: parent '$parentId' not found")
+                    return@forEachIndexed
+                }
+                if (nextParent != null && nextParent.group != true) {
+                    report(source, target.id, "patch move: parent '${nextParent.id}' is not a group")
+                    return@forEachIndexed
+                }
+                var ancestor = nextParent
+                val visited = mutableSetOf<String>()
+                while (ancestor != null && ancestor !== target) {
+                    if (!visited.add(ancestor.id)) {
+                        report(source, target.id, "patch move: invalid parent ancestry")
+                        return@forEachIndexed
+                    }
+                    ancestor = parents[ancestor.id]
+                }
+                if (ancestor === target) {
+                    report(source, target.id, "patch move: an entry cannot contain itself")
+                    return@forEachIndexed
+                }
+                val previousItems = (previousParent?.let(::children) ?: output).toMutableList()
+                previousItems.removeAt(previousItems.indexOfFirst { it === target })
+                val nextItems = if (previousParent === nextParent) previousItems else
+                    (nextParent?.let(::children) ?: output).toMutableList()
+                nextItems.add(insertionIndex(nextItems.size, patch.position), target)
+                if (previousParent !== nextParent) writeChildren(previousParent, previousItems, source)
+                writeChildren(nextParent, nextItems, source)
+                if (patch.parent is FieldPatch.Set) fields["parent"] = source
+                fields["position"] = source
+            }
             patch.replacement?.let {
                 if (it.isBlank()) report(source, target.id, "replacement module must not be blank") else {
                     target.name = it

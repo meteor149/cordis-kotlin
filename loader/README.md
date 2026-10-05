@@ -19,6 +19,16 @@ mutation APIs remain caller-coordinated; hosts should use the transaction API fo
 compositions. Rollback attempts all root restorations and attaches additional failures to
 the original exception; callers must treat failed rollback as a degraded runtime.
 
+Changed-parent branches retire before any group updates, then recreate in the destination
+context. This prevents a later source-group update from disposing an already moved destination
+instance and preserves realm ownership independently of group order. Moving a group recreates
+its subtree; reordering within the same parent retains fibers/effects/resources. Parent metadata
+and old realms restore on candidate allocation or publication failure.
+
+Group shutdown aborts descendant allocations before releasing providers. This prevents
+withdrawal from waiting on a child that is still allocating and depends on that provider.
+Cleanup runs without cancellation and attempts all child releases, retaining failure details.
+
 ## Desktop JVM plugin JARs
 
 `JvmModuleLoader` loads independently built Cordis plugins from JAR files already installed below

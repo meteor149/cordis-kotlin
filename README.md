@@ -43,6 +43,11 @@ existing compilation outputs, builds `.kplugin` archives, and exposes them as Gr
 for product bundles to collect. Android libraries do not need separate application wrapper
 projects. Application SDK metadata and default composition remain consumer-owned.
 
+The [Include composer](include/README.md) supplies detached layered patches for configuration
+tooling and runtime loading, including positioned insertion and parent/order changes. Loader
+tree transactions recreate changed-parent branches in their new context and retain resources
+for same-parent ordering. Named profiles, package trust and durable generations belong to hosts.
+
 The desktop loader runs Cordis plugins from verified JARs in an application-controlled directory.
 
 - Plugin code, resources, private JAR dependencies, and JNI libraries are isolated per generation.
