@@ -5,6 +5,8 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import org.cordis.asDynamicPlugin
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
 
 /** A candidate failed and its previous tree could not be safely restored. */
 class TreeRestorationException(
@@ -20,6 +22,7 @@ class TreeRestorationException(
 fun detachedEntryOptions(entry: EntryOptions): EntryOptions {
     fun value(input: Any?): Any? = when (input) {
         is EntryOptions -> detachedEntryOptions(input)
+        is JsonElement -> Json.parseToJsonElement(input.toString())
         is List<*> -> input.map(::value)
         is Map<*, *> -> input.entries.associate { it.key to value(it.value) }
         is Set<*> -> input.map(::value).toSet()

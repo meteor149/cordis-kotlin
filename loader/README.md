@@ -1,5 +1,10 @@
 # Cordis Loader
 
+Typed `JsonElement` configurations are literal data. Interpolation and transaction snapshots
+retain JSON object/array types with detached values, including after rollback. A JSON object
+containing `__jsExpr` is not an expression. Use `JsExpr` or the loader's plain-map expression
+dialect explicitly when expression evaluation is intended.
+
 Whole-tree transactions distinguish candidate failure with successful restoration from
 `TreeRestorationException`, whose cause is the candidate/publication failure and whose
 suppressed exceptions describe failed retirement or restoration. Rollback retires all tracked

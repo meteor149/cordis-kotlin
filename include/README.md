@@ -1,5 +1,9 @@
 # Cordis Include and composition
 
+Composition copies preserve typed `JsonElement` containers rather than coercing JSON objects
+and arrays to ordinary maps/lists. Nested JSON values are detached from caller-owned containers
+on insertion, configuration replacement and repeated compilation.
+
 `composeEntries(base, layers)` is the detached, ordered interpreter shared by Include and
 offline tooling. Entries inserted by earlier operations are immediately addressable. Results
 contain source diagnostics and field origins; `requireValid()` rejects any diagnostics.

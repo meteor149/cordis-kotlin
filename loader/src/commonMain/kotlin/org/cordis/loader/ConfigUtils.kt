@@ -1,10 +1,12 @@
 package org.cordis.loader
 
 import org.cordis.Context
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
 
 data class JsExpr(val __jsExpr: String)
 
-fun isJsExpr(value: Any?): Boolean = value is JsExpr || value is Map<*, *> && value.containsKey("__jsExpr")
+fun isJsExpr(value: Any?): Boolean = value is JsExpr || value !is JsonElement && value is Map<*, *> && value.containsKey("__jsExpr")
 
 /**
  * Evaluates the portable subset used by loader configs: literals and Context service paths.
@@ -51,6 +53,8 @@ private fun decodeQuoted(expression: String): String = buildString {
 
 fun interpolate(ctx: Context, value: Any?): Any? = when (value) {
     is JsExpr -> evaluate(ctx, value.__jsExpr)
+    // Typed JSON is literal portable data, not a loader expression/container dialect.
+    is JsonElement -> Json.parseToJsonElement(value.toString())
     is Map<*, *> -> if (value.containsKey("__jsExpr")) evaluate(ctx, value["__jsExpr"].toString())
         else value.entries.associate { it.key to interpolate(ctx, it.value) }
     is List<*> -> value.map { interpolate(ctx, it) }

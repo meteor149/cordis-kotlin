@@ -2,6 +2,8 @@ package org.cordis.include
 
 import org.cordis.loader.EntryOptions
 import org.cordis.loader.FieldPatch
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
 
 /** A source-owned layer. Order is significant; later layers override earlier ones. */
 data class CompositionLayer(val id: String, val patches: List<PatchOptions>)
@@ -27,6 +29,7 @@ data class CompositionResult(
  */
 internal fun copyCompositionValue(value: Any?): Any? = when (value) {
     is EntryOptions -> copyCompositionEntry(value)
+    is JsonElement -> Json.parseToJsonElement(value.toString())
     is Map<*, *> -> value.entries.associate { it.key to copyCompositionValue(it.value) }
     is List<*> -> value.map(::copyCompositionValue)
     is Set<*> -> value.map(::copyCompositionValue).toSet()
