@@ -169,6 +169,9 @@ class PlatformFunctionalTest {
         val second = run("packagePlugins")
         assertTrue(second.output.contains("Reusing configuration cache"))
         assertEquals(TaskOutcome.UP_TO_DATE, second.task(":prepareDemoAndroidApk")?.outcome)
+        // The complete packaging archive must not replace AGP's local dependency views.
+        val lint = run("generateReleaseLintModel")
+        assertEquals(TaskOutcome.SUCCESS, lint.task(":generateReleaseLintModel")?.outcome)
         val privateBuild = File(directory, "privateAndroid/build.gradle")
         privateBuild.writeText(privateBuild.readText().replace("; id 'io.github.meteor149.cordis.packager'", ""))
         val rejected = GradleRunner.create().withProjectDir(directory).withPluginClasspath()

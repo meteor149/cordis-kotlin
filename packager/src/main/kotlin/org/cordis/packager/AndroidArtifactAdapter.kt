@@ -42,7 +42,9 @@ internal class AndroidArtifactAdapter(private val project: Project) : ArtifactAd
                 // AGP's local runtime variants normally expose classes/resources separately.
                 // Publish the complete AAR as an additional variant owned by this module.
                 project.configurations.getByName("${selected.name}RuntimeElements").outgoing.variants.create("cordisArchive") {
-                    attributes.attribute(ArtifactTypeDefinition.ARTIFACT_TYPE_ATTRIBUTE, "aar")
+                    // Keep this archive out of AGP's tooling and lint artifact views.
+                    // Those expect local Android projects to expose split classes/resources.
+                    attributes.attribute(ArtifactTypeDefinition.ARTIFACT_TYPE_ATTRIBUTE, "cordis-android-archive")
                     artifact(selected.artifacts.get(SingleArtifact.AAR))
                 }
             }
@@ -129,6 +131,7 @@ abstract class RawAndroidArtifactRule : AttributeDisambiguationRule<String> {
     override fun execute(details: MultipleCandidatesDetails<String>) {
         if (details.consumerValue != "cordis-android-archive") return
         when {
+            "cordis-android-archive" in details.candidateValues -> details.closestMatch("cordis-android-archive")
             "aar" in details.candidateValues -> details.closestMatch("aar")
             "jar" in details.candidateValues -> details.closestMatch("jar")
         }
