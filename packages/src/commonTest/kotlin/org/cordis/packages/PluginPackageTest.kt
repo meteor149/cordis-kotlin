@@ -13,6 +13,38 @@ class PluginPackageTest {
     )
 
     @Test
+    fun packageMetadataRoundTripsAndPreservesLegacyFormat() {
+        val enriched = manifest().copy(
+            displayName = "Example Plugin",
+            author = "Example Author",
+            contributors = listOf("Contributor"),
+            homepage = "https://example.org/plugin",
+            repository = PackageRepository(url = "https://example.org/repo.git", directory = "plugins/example"),
+            bugsUrl = "https://example.org/issues",
+            keywords = listOf("agent", "tools"),
+        )
+        assertEquals(enriched, PluginPackageCodec.decode(PluginPackageCodec.encode(enriched)))
+        val legacy = manifest().copy(formatVersion = 1)
+        assertEquals(legacy, PluginPackageCodec.decode(PluginPackageCodec.encode(legacy)))
+        assertFailsWith<IllegalArgumentException> { enriched.copy(formatVersion = 1).validate() }
+    }
+
+    @Test
+    fun invalidPackageMetadataIsRejected() {
+        listOf(
+            manifest().copy(author = "Author\nInjected"),
+            manifest().copy(contributors = listOf("Author", "Author")),
+            manifest().copy(homepage = "javascript:alert(1)"),
+            manifest().copy(bugsUrl = "file:///private"),
+            manifest().copy(repository = PackageRepository(url = "https://example.org/repo", directory = "../other")),
+            manifest().copy(keywords = listOf("agent", "agent")),
+            manifest().copy(keywords = listOf("two words")),
+        ).forEach { invalid ->
+            assertFailsWith<IllegalArgumentException> { invalid.validate() }
+        }
+    }
+
+    @Test
     fun dualTargetAndSingleTargetSelection() {
         val windows = PackageHost("windows", "x86_64", runtimes = mapOf("jvm" to "21"))
         val mobile = PackageHost("android", "arm64", runtimes = mapOf("android-dex" to "35"))

@@ -1,9 +1,18 @@
 # Cordis plugin packages
 
 Optional distribution metadata independent of Cordis core, application SDKs and execution
-technology. The manifest declares `formatVersion: 1`. `PluginPackageManifest` describes a logical release and its artifact
-variants. The common model does not require JVM classes, JAR/APK suffixes, Java, Android API
-levels or iOS frameworks.
+technology. `formatVersion: 1` manifests remain supported; format 2 adds author, contributor,
+homepage, repository, issue tracker and keyword metadata. New manifests default to format 2, while the
+packager keeps format 1 when none of those fields are supplied. `PluginPackageManifest`
+describes a logical release and its artifact variants. The common model does not require JVM
+classes, JAR/APK suffixes, Java, Android API levels or iOS frameworks.
+
+The root manifest carries package-wide presentation data: `displayName`, `description`,
+`license`, `author`, `contributors`, `homepage`, `repository` (`type`, `url`, optional monorepo
+`directory`), `bugsUrl` and `keywords`. Author and contributor values are display names; contact
+details are not required. Homepage and bug tracker URLs use HTTP(S). Repository URLs support
+HTTP(S), SSH, Git and `git+` forms. Hosts can present this metadata without interpreting an
+application-specific extension.
 
 Each variant has `targets`, an opaque `artifact` path, a `runtime` descriptor and optional
 host extensions. Runtime IDs are open identities: for example `jvm`, `android-dex`,

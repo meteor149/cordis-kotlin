@@ -7,27 +7,53 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 
+const val CurrentPackageFormatVersion = 2
+
 /** Distribution metadata only. Hosts own publisher trust, configuration and installation state. */
 @Serializable
 data class PluginPackageManifest(
     @OptIn(ExperimentalSerializationApi::class)
     @EncodeDefault
-    val formatVersion: Int = 1,
+    val formatVersion: Int = CurrentPackageFormatVersion,
     val id: String,
     val version: String,
     val displayName: String? = null,
     val description: String? = null,
     val license: String? = null,
+    val author: String? = null,
+    val contributors: List<String> = emptyList(),
+    val homepage: String? = null,
+    val repository: PackageRepository? = null,
+    val bugsUrl: String? = null,
+    val keywords: List<String> = emptyList(),
     val dependencies: List<PackageDependency> = emptyList(),
     val variants: List<PackageVariant>,
     val files: List<PackageFile>,
     val extensions: JsonObject = JsonObject(emptyMap()),
 ) {
     fun validate() {
-        require(formatVersion == 1) { "Unsupported package format: $formatVersion" }
+        require(formatVersion in 1..CurrentPackageFormatVersion) { "Unsupported package format: $formatVersion" }
         validatePackageId(id)
         validatePackageVersion(version)
         require(listOfNotNull(displayName, description, license).all { it.isNotBlank() }) { "Empty package label" }
+        require(displayName == null || displayName.length <= 160) { "Package display name exceeds limit" }
+        require(description == null || description.length <= 4096) { "Package description exceeds limit" }
+        require(license == null || license.length <= 128) { "Package license exceeds limit" }
+        author?.let { require(it.isNotBlank() && it.length <= 200 && it.none(::isPackageControlCharacter)) { "Invalid package author" } }
+        require(contributors.size <= 32 && contributors.all { contributor ->
+            contributor.isNotBlank() && contributor.length <= 200 && contributor.none(::isPackageControlCharacter)
+        } && contributors.distinct().size == contributors.size) { "Invalid package contributors" }
+        homepage?.let(::validatePackageHomepage)
+        repository?.validate()
+        bugsUrl?.let(::validatePackageHomepage)
+        require(keywords.size <= 32 && keywords.all { keyword ->
+            keyword.isNotBlank() && keyword.length <= 64 && keyword.none { it.isWhitespace() || isPackageControlCharacter(it) }
+        } && keywords.distinct().size == keywords.size) { "Invalid package keywords" }
+        if (formatVersion == 1) {
+            require(author == null && contributors.isEmpty() && homepage == null && repository == null && bugsUrl == null && keywords.isEmpty()) {
+                "Author, contributor, homepage, repository, bugsUrl and keywords require package format 2"
+            }
+        }
         require(dependencies.map { it.id }.distinct().size == dependencies.size) { "Duplicate package dependency" }
         dependencies.forEach {
             validatePackageId(it.id)
@@ -66,6 +92,20 @@ data class PluginPackageManifest(
 
 @Serializable
 data class PackageDependency(val id: String, val version: String)
+
+/** Standard source-control location, including monorepo subdirectory when present. */
+@Serializable
+data class PackageRepository(
+    val type: String = "git",
+    val url: String,
+    val directory: String? = null,
+) {
+    fun validate() {
+        require(type.matches(Regex("[a-z][a-z0-9+.-]{0,31}"))) { "Invalid package repository type" }
+        validatePackageRepositoryUrl(url)
+        directory?.let(::validatePackagePath)
+    }
+}
 
 @Serializable
 data class PackageFile(val path: String, val size: Long, val sha256: String)
@@ -293,6 +333,38 @@ fun validatePackageId(id: String) {
 fun validatePackageVersion(version: String) {
     require(version.matches(VersionPattern)) { "Invalid package SemVer: $version" }
 }
+
+fun validatePackageHomepage(homepage: String) {
+    require(homepage.length in 8..2048 && homepage.none { it.isWhitespace() || isPackageControlCharacter(it) || it == '\\' }) {
+        "Invalid package homepage"
+    }
+    val scheme = homepage.substringBefore("://", "").lowercase()
+    val authority = homepage.substringAfter("://").takeWhile { it != '/' && it != '?' && it != '#' }
+    require((scheme == "http" || scheme == "https") && authority.isNotEmpty() && '@' !in authority &&
+        authority.any(Char::isLetterOrDigit) && authority.all { it.isLetterOrDigit() || it in ".-:[]%" }) {
+        "Package homepage must be an HTTP(S) URL"
+    }
+}
+
+private fun validatePackageRepositoryUrl(url: String) {
+    require(url.length in 8..2048 && url.none { it.isWhitespace() || isPackageControlCharacter(it) || it == '\\' }) {
+        "Invalid package repository URL"
+    }
+    val scheme = url.substringBefore("://", "").lowercase()
+    if (scheme.isNotEmpty()) {
+        require(scheme in setOf("http", "https", "ssh", "git", "git+https", "git+ssh")) {
+            "Unsupported package repository URL scheme"
+        }
+        val authority = url.substringAfter("://").takeWhile { it != '/' && it != '?' && it != '#' }
+        require(authority.isNotEmpty() && authority.any(Char::isLetterOrDigit)) { "Invalid package repository URL host" }
+    } else {
+        require(Regex("[A-Za-z0-9._-]+@[A-Za-z0-9.-]+:[^\\s]+/.+").matches(url)) {
+            "Invalid package repository URL"
+        }
+    }
+}
+
+private fun isPackageControlCharacter(character: Char): Boolean = character.code < 32 || character.code in 127..159
 
 fun validatePackagePath(path: String) {
     require(path.isNotEmpty() && path.length <= 1024 && path.none { it == '\\' || it == ':' || it.code < 32 || it.code == 127 }) { "Invalid package path" }

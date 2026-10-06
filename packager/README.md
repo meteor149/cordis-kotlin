@@ -81,6 +81,7 @@ Apply the packager to the existing source module. No separate Android applicatio
 or second compilation of `commonMain` is required.
 
 ```kotlin
+import org.cordis.packages.PackageRepository
 import org.cordis.packages.PackageTarget
 
 plugins {
@@ -105,6 +106,19 @@ cordisPackages {
         register("search") {
             packageId.set("feature.search")
             packageVersion.set("1.0.0")
+            displayName.set("Search")
+            description.set("Adds web search tools.")
+            license.set("Apache-2.0")
+            author.set("Example Maintainer")
+            contributors.set(listOf("Search Contributor"))
+            homepage.set("https://example.org/search")
+            repository.set(PackageRepository(
+                type = "git",
+                url = "git+https://github.com/example/search-plugin.git",
+                directory = "plugins/search",
+            ))
+            bugsUrl.set("https://github.com/example/search-plugin/issues")
+            keywords.set(listOf("search", "web"))
             variants {
                 register("desktop") {
                     jvmTarget.set("desktop")
@@ -130,6 +144,10 @@ cordisPackages {
 `.sha256` sidecar. `packagePlugins` builds every declared release. A module may declare
 several releases with different entries, platform support, dependency exclusions and assets.
 Each release has a distinct package ID; version defaults to the project's version.
+Presentation metadata is written to the Cordis manifest. Packages using author, contributors,
+homepage, repository, bugs URL or keywords are emitted as format 2; format 1 stays in use when
+those fields are unset, so adding metadata is an explicit package-format requirement for older
+hosts.
 Set `contentVersion` to `true` to append `+content.<sha256>` to the base version. The
 digest covers the complete resolved manifest, payload checksums and file extensions,
 including host ABI/configuration metadata. Rebuilding unchanged inputs keeps the same
