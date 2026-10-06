@@ -20,6 +20,8 @@ import kotlinx.serialization.json.longOrNull
 import kotlinx.atomicfu.atomic
 import kotlinx.atomicfu.locks.SynchronizedObject
 import kotlinx.atomicfu.locks.synchronized
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.cordis.Context
 import org.cordis.CoreEvents
 import org.cordis.EffectScope
@@ -35,6 +37,7 @@ import org.cordis.loader.IsolationRule
 import org.cordis.loader.Loader
 import org.cordis.loader.LoaderEvents
 import org.cordis.loader.RefreshableEntryTree
+import org.cordis.loader.withTreeTransaction
 
 data class PatchOptions(
     val id: String? = null,
@@ -47,11 +50,13 @@ data class PatchOptions(
     val intercept: FieldPatch<Map<String, Any?>?> = FieldPatch.Keep,
     val isolate: FieldPatch<IsolationConfig?> = FieldPatch.Keep,
     val extra: Map<String, Any?> = emptyMap(),
+    val remove: Boolean = false,
+    val replacement: String? = null,
+    /** Keep retains the current parent; Set(null) moves an entry to the root. */
+    val parent: FieldPatch<String?> = FieldPatch.Keep,
+    /** Index after removal; negative values count from the end, and out-of-range values clamp. */
+    val position: Int? = null,
 )
-
-private inline fun <T> FieldPatch<T>.ifSet(block: (T) -> Unit) {
-    if (this is FieldPatch.Set) block(value)
-}
 
 /**
  * A relative path is resolved from the owning loader file. `config:foo.yml`
@@ -63,6 +68,7 @@ data class IncludeConfig(
     val initial: List<EntryOptions>? = null,
     val patches: List<PatchOptions>? = null,
     val enableLogs: Boolean? = null,
+    val layered: Boolean = false,
 )
 
 class Include(parent: Context, var config: IncludeConfig) : EntryTree(parent), RefreshableEntryTree {
@@ -73,6 +79,7 @@ class Include(parent: Context, var config: IncludeConfig) : EntryTree(parent), R
         else -> throw IllegalArgumentException("extension \"${PlatformFileSystem.extension(filename)}\" not supported")
     }
     private val ioLock = SynchronizedObject()
+    private val updateLock = Mutex()
     private val readonlyRef = atomic(false)
     val readonly: Boolean get() = readonlyRef.value
     private var content: String? = null
@@ -89,19 +96,20 @@ class Include(parent: Context, var config: IncludeConfig) : EntryTree(parent), R
             val initial = config.initial ?: throw IllegalStateException("config file not found: $filename")
             writeFileNow(initial)
         }
-        read(forced = true)
-        root.update(applyPatches(synchronized(ioLock) { data.orEmpty().toMutableList() }))
+        refreshCandidate(forced = true)
     }
 
-    suspend fun updateConfig(next: IncludeConfig): Boolean {
-        if (next.path != synchronized(ioLock) { config.path }) return false
-        val current = synchronized(ioLock) {
-            config = next
-            enableLogs = next.enableLogs ?: enableLogs
-            data.orEmpty().toList()
+    suspend fun updateConfig(next: IncludeConfig): Boolean = updateLock.withLock {
+        if (next.path != synchronized(ioLock) { config.path }) return@withLock false
+        val current = synchronized(ioLock) { data.orEmpty().toList() }
+        val composed = interpret(current, next.patches.orEmpty())
+        withTreeTransaction(composed) {
+            synchronized(ioLock) {
+                config = next
+                enableLogs = next.enableLogs ?: enableLogs
+            }
         }
-        root.update(current)
-        return true
+        true
     }
 
     private fun checkAccess() {
@@ -111,74 +119,37 @@ class Include(parent: Context, var config: IncludeConfig) : EntryTree(parent), R
     fun read(forced: Boolean = false): Boolean = synchronized(ioLock) {
         val next = PlatformFileSystem.readUtf8(filename)
         if (!forced && content == next) return@synchronized false
-        content = next
-        data = decode(next)
-        checkAccess()
+        // Read/parse preflight only. Committed state changes after tree application.
+        decode(next)
         true
     }
 
     fun applyPatches(input: MutableList<EntryOptions>): List<EntryOptions> {
         val patches = synchronized(ioLock) { config.patches.orEmpty() }
-        if (patches.isEmpty()) return input
-        val entries = linkedMapOf<String, EntryOptions>()
-        fun buildMap(items: List<EntryOptions>) {
-            items.forEach { entry ->
-                if (entry.id.isNotBlank()) entries[entry.id] = entry
-                if (entry.group == true) (entry.config as? List<*>)
-                    ?.filterIsInstance<EntryOptions>()?.let(::buildMap)
-            }
-        }
-        buildMap(input)
-
-        patches.forEach { patch ->
-            val inserted = patch.insert
-            if (inserted != null) {
-                if (patch.id == null) {
-                    input += inserted
-                } else {
-                    val target = entries[patch.id]
-                    if (target == null) {
-                        warn("patch insert: entry %s not found", patch.id)
-                    } else if (target.group != true) {
-                        warn("patch insert: entry %s is not a group", patch.id)
-                    } else {
-                        val children = (target.config as? List<*>)?.filterIsInstance<EntryOptions>()?.toMutableList()
-                            ?: mutableListOf()
-                        children += inserted
-                        target.config = children
-                    }
-                }
-                return@forEach
-            }
-            val id = patch.id
-            if (id == null) {
-                warn("patch: id is required for non-insert patches")
-                return@forEach
-            }
-            val target = entries[id]
-            if (target == null) {
-                warn("patch: entry %s not found", id)
-                return@forEach
-            }
-            if (patch.name != null && patch.name != target.name) {
-                warn("patch: name mismatch for %s (expected %s, got %s), skipping", id, target.name, patch.name)
-                return@forEach
-            }
-            patch.config.ifSet { target.config = it }
-            patch.group.ifSet { target.group = it }
-            patch.disabled.ifSet { target.disabled = it }
-            patch.inject.ifSet { target.inject = it }
-            patch.intercept.ifSet { target.intercept = it }
-            patch.isolate.ifSet { target.isolate = it }
-            if (patch.extra.isNotEmpty()) target.extra = target.extra + patch.extra
-        }
-        return input
+        return interpret(input, patches)
     }
 
+    private fun interpret(input: List<EntryOptions>, patches: List<PatchOptions>): List<EntryOptions> {
+        val result = composeEntries(input, listOf(CompositionLayer(filename, patches)))
+        result.diagnostics.forEach { warn(it.message) }
+        return result.entries
+    }
     suspend fun stop() = root.stop()
 
-    override suspend fun refresh() {
-        if (read()) root.update(synchronized(ioLock) { data.orEmpty().toList() })
+    override suspend fun refresh() = refreshCandidate(forced = false)
+
+    private suspend fun refreshCandidate(forced: Boolean) = updateLock.withLock {
+        val next = PlatformFileSystem.readUtf8(filename)
+        if (!forced && synchronized(ioLock) { content == next }) return@withLock
+        val parsed = decode(next)
+        val patches = synchronized(ioLock) { config.patches.orEmpty() }
+        withTreeTransaction(interpret(parsed, patches)) {
+            synchronized(ioLock) {
+                content = next
+                data = parsed
+                checkAccess()
+            }
+        }
     }
 
     private fun writeFileNow(entries: List<EntryOptions>) = synchronized(ioLock) {
@@ -190,6 +161,7 @@ class Include(parent: Context, var config: IncludeConfig) : EntryTree(parent), R
     }
 
     override fun write() {
+        if (config.layered || ctx[Loader.Key]?.transactionActive == true) return
         ctx.emitEvent(LoaderEvents.ConfigUpdate, Unit)
         // Config files are intentionally small. A synchronous atomic replace
         // prevents the owner from being disposed while a background write is

@@ -13,6 +13,12 @@ import org.cordis.InterceptKey
 import org.cordis.Plugin
 import org.cordis.ServiceKey
 import org.cordis.ServiceReference
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.withContext
+import kotlin.coroutines.AbstractCoroutineContextElement
+import kotlin.coroutines.CoroutineContext
 
 data class LoaderConfig(val baseUrl: String? = null)
 data class LoaderIntercept(val await: Boolean = false)
@@ -34,6 +40,16 @@ open class Loader(ctx: Context, val config: LoaderConfig = LoaderConfig()) : Ent
     val name = "loader"
     var internal: ModuleLoader? = ModuleLoader.fromInternal()
     val builtins: MutableMap<String, Any?> = mutableMapOf()
+    private val mutationLock = Mutex()
+    var transactionActive: Boolean = false
+        internal set
+
+    /** Serializes tree transactions with module HMR. Callbacks must not reenter it. */
+    suspend fun <T> withMutation(block: suspend () -> T): T {
+        val owned = currentCoroutineContext()[MutationOwner]?.loaders.orEmpty()
+        check(this !in owned) { "loader mutation callbacks must not reenter the same loader" }
+        return mutationLock.withLock { withContext(MutationOwner(owned + this)) { block() } }
+    }
     private val realms = mutableMapOf<String, GlobalRealm>()
     var exitRequested: Boolean = false
         private set
@@ -58,11 +74,11 @@ open class Loader(ctx: Context, val config: LoaderConfig = LoaderConfig()) : Ent
             val update = event.payload
             val fiber = update.fiber
             val entry = fiber.attributes[Entry.ATTRIBUTE] ?: return@interceptEvent next()
-            if (update.noSave || fiber.parent.fiber.attributes[Entry.ATTRIBUTE] === entry) {
+            if (transactionActive || update.noSave || fiber.parent.fiber.attributes[Entry.ATTRIBUTE] === entry) {
                 return@interceptEvent next()
             }
             entry.options.config = update.config
-            entry.parent.tree.write()
+            if (!transactionActive) entry.parent.tree.write()
             next()
         }
 
@@ -76,6 +92,7 @@ open class Loader(ctx: Context, val config: LoaderConfig = LoaderConfig()) : Ent
         this.ctx.listen(CoreEvents.Plugin, EventOptions(global = true)) { event ->
             val fiber = event.payload
             val entry = fiber.attributes[Entry.ATTRIBUTE] ?: return@listen Unit
+            if (transactionActive || entry.disposingForUpdate) return@listen Unit
 
             // Creation, untracked plugins, nested child plugins, registry/HMR
             // deletion, tree disposal, and loader-driven disable are excluded
@@ -129,6 +146,10 @@ open class Loader(ctx: Context, val config: LoaderConfig = LoaderConfig()) : Ent
         val Key = ServiceKey<Loader>("loader")
         val Intercept = InterceptKey<LoaderIntercept>("loader")
     }
+}
+
+private class MutationOwner(val loaders: Set<Loader>) : AbstractCoroutineContextElement(Key) {
+    companion object Key : CoroutineContext.Key<MutationOwner>
 }
 
 object LoaderPlugin : Plugin<LoaderConfig> {

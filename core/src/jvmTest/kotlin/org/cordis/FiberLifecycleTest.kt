@@ -8,6 +8,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.withTimeout
 import org.junit.jupiter.api.Test
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
@@ -17,8 +19,76 @@ import kotlin.test.assertFalse
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.test.assertSame
 
 class FiberLifecycleTest {
+    @Test
+    fun `allocation failure retains provider identity across repeated await`() = runBlocking {
+        val root = Context()
+        val failure = IllegalStateException("original allocation failure")
+        val subject = plugin<Unit>(name = "original-allocation-failure") { _, _ -> throw failure }
+        val fiber = root.plugin(subject, Unit)
+        repeat(2) { assertSame(failure, assertFailsWith<IllegalStateException> { fiber.await() }) }
+        fiber.dispose()
+    }
+
+    @Test
+    fun `explicit withdrawal cancels allocation whose dependency was already withdrawn`() = runBlocking {
+        val root = Context()
+        val dependency = ServiceKey<Int>("cancel-already-pending")
+        val provision = root.provide(dependency, 1)
+        val loading = CompletableDeferred<Unit>()
+        var released = false
+        val subject = plugin<Unit>(name = "cancel-already-inactive", inject = dependencies(dependency)) { _, _ ->
+            collect { released = true }
+            loading.complete(Unit)
+            awaitCancellation()
+        }
+        val fiber = root.plugin(subject, Unit)
+        withTimeout(5_000) {
+            loading.await()
+            val withdrawal = async { provision.dispose() }
+            while (root[dependency] != null) delay(1)
+            fiber.dispose()
+            withdrawal.await()
+        }
+        assertTrue(released)
+        assertEquals(FiberState.DISPOSED, fiber.state)
+    }
+
+    @Test
+    fun `explicit withdrawal cancels suspended allocation and joins uncancelled cleanup`() = runBlocking {
+        val root = Context()
+        val loading = CompletableDeferred<Unit>()
+        val cleaning = CompletableDeferred<Unit>()
+        val releaseCleanup = CompletableDeferred<Unit>()
+        var releases = 0
+        val subject = plugin<Unit>(name = "cancel-suspended-apply") { _, _ ->
+            collect {
+                cleaning.complete(Unit)
+                releaseCleanup.await()
+                releases++
+            }
+            loading.complete(Unit)
+            awaitCancellation()
+        }
+        val fiber = root.plugin(subject, Unit)
+        withTimeout(5_000) {
+            loading.await()
+            val disposal = async { fiber.dispose() }
+            try {
+                cleaning.await()
+                assertFalse(disposal.isCompleted)
+            } finally { releaseCleanup.complete(Unit) }
+            disposal.await()
+            fiber.await()
+        }
+        assertEquals(1, releases)
+        assertNull(fiber.uid)
+        assertEquals(FiberState.DISPOSED, fiber.state)
+        assertEquals(0, root.registry.size)
+    }
+
     @Test
     fun `concurrent plugin creation cannot orphan a runtime`() = runBlocking {
         val root = Context()
@@ -147,17 +217,83 @@ class FiberLifecycleTest {
     }
 
     @Test
-    fun `disposer failure is logged and fiber still reaches disposed`() = runBlocking {
+    fun `disposer failure is logged propagated and fiber still reaches disposed`(): Unit = runBlocking {
         val root = Context()
         val subject = plugin<Unit>(name = "bad-dispose") { _, _ ->
             collect { error("dispose failure") }
         }
         val fiber = root.plugin(subject, Unit).await()
-        fiber.dispose()
+        assertFailsWith<IllegalStateException> { fiber.dispose() }
         assertEquals(FiberState.DISPOSED, fiber.state)
         assertTrue(root.logger.buffer.any { message ->
             message.args.any { it is IllegalStateException && it.message == "dispose failure" }
         })
+        assertFailsWith<IllegalStateException> { fiber.dispose() }
+    }
+
+    @Test
+    fun `failed retirement attempts all releases and prevents update allocation`(): Unit = runBlocking {
+        val root = Context()
+        val trace = mutableListOf<String>()
+        var allocations = 0
+        val first = IllegalStateException("first cleanup")
+        val second = IllegalArgumentException("second cleanup")
+        val subject = plugin<Int>(name = "retirement-failure") { _, _ ->
+            allocations++
+            collect { trace += "one"; throw first }
+            collect { trace += "two"; throw second }
+            collect { trace += "three" }
+        }
+        val fiber = root.plugin(subject, 1).await()
+        val failure = assertFailsWith<IllegalArgumentException> { fiber.update(2) }
+        assertSame(second, failure)
+        assertTrue(failure.suppressedExceptions.any { it === first })
+        assertEquals(setOf("one", "two", "three"), trace.toSet())
+        assertEquals(3, trace.size)
+        assertEquals(1, allocations)
+        assertEquals(FiberState.FAILED, fiber.state)
+        assertFailsWith<IllegalArgumentException> { fiber.update(3) }
+        assertEquals(1, allocations)
+        assertFailsWith<IllegalArgumentException> { fiber.dispose() }
+        assertEquals(FiberState.DISPOSED, fiber.state)
+    }
+
+    @Test
+    fun `dependency recovery cannot reactivate a consumer whose cleanup failed`(): Unit = runBlocking {
+        val root = Context()
+        val key = ServiceKey<String>("failed-consumer-dependency")
+        val failure = IllegalStateException("consumer cleanup")
+        var allocations = 0
+        val provider = plugin<Unit> { ctx, _ -> ctx.provide(key, "available") }
+        val consumer = plugin<Unit>(inject = dependencies(key)) { _, _ ->
+            allocations++
+            collect { throw failure }
+        }
+        val first = root.plugin(provider, Unit).await()
+        val fiber = root.plugin(consumer, Unit).await()
+        assertSame(failure, assertFailsWith<IllegalStateException> { first.dispose() })
+        assertSame(failure, assertFailsWith<IllegalStateException> { fiber.await() })
+        val replacement = root.plugin(provider, Unit).await()
+        assertSame(failure, assertFailsWith<IllegalStateException> { fiber.await() })
+        assertEquals(1, allocations)
+        assertEquals(FiberState.FAILED, fiber.state)
+        assertSame(failure, assertFailsWith<IllegalStateException> { replacement.dispose() })
+        assertSame(failure, assertFailsWith<IllegalStateException> { fiber.dispose() })
+    }
+
+    @Test
+    fun `allocation failure keeps its cause when partial cleanup also fails`(): Unit = runBlocking {
+        val root = Context()
+        val allocation = IllegalStateException("allocation")
+        val cleanup = IllegalArgumentException("partial cleanup")
+        val subject = plugin<Unit> { _, _ ->
+            collect { throw cleanup }
+            throw allocation
+        }
+        val fiber = root.plugin(subject, Unit)
+        assertSame(allocation, assertFailsWith<IllegalStateException> { fiber.await() })
+        assertTrue(allocation.suppressedExceptions.any { it === cleanup })
+        assertSame(cleanup, assertFailsWith<IllegalArgumentException> { fiber.dispose() })
     }
 
     @Test

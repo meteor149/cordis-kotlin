@@ -43,6 +43,11 @@ existing compilation outputs, builds `.kplugin` archives, and exposes them as Gr
 for product bundles to collect. Android libraries do not need separate application wrapper
 projects. Application SDK metadata and default composition remain consumer-owned.
 
+The [Include composer](include/README.md) supplies detached layered patches for configuration
+tooling and runtime loading, including positioned insertion and parent/order changes. Loader
+tree transactions recreate changed-parent branches in their new context and retain resources
+for same-parent ordering. Named profiles, package trust and durable generations belong to hosts.
+
 The desktop loader runs Cordis plugins from verified JARs in an application-controlled directory.
 
 - Plugin code, resources, private JAR dependencies, and JNI libraries are isolated per generation.
@@ -58,6 +63,21 @@ See [loader/README.md](loader/README.md#desktop-jvm-plugin-jars) for setup, pack
 details.
 
 ## Android dynamic loading
+
+Explicit Fiber withdrawal cancels a suspended plugin `apply` operation and waits for its
+collected resource cleanup. Cleanup runs in the transition owner rather than the cancelled
+allocation job. Dependency relocation retains its existing wait-for-load behavior. Plugins
+should allocate resources during `apply`, collect every disposer, and keep allocation
+cancellable; blocking platform calls still require their own cancellation strategy.
+
+Fiber retirement attempts every collected disposer and propagates cleanup failures to
+`dispose`, `restart`, `update` and subsequent `await` calls. Failed cleanup prevents automatic
+reactivation, including when a missing dependency returns. Explicit disposal still reaches
+Disposed and repeated disposal reports the retained failure without rerunning releases.
+Allocation failures retain their original cause, with partial-cleanup errors suppressed.
+Hosts must treat uncertain retirement as a recovery boundary rather than allocate an overlapping
+replacement. A failed disposer is not automatically retried; recovery may require restarting
+the process or an application-specific resource recovery mechanism.
 
 The Android loader runs Cordis plugins from APK, JAR, or dex files in the app's private storage.
 

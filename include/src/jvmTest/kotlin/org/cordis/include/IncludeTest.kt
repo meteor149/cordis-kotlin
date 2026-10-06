@@ -22,12 +22,72 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
+import kotlin.test.assertFailsWith
 
 class IncludeTest {
     private val valueEvent = EventKey<Unit, String>("test/get-value")
     private val extraEvent = EventKey<Unit, String>("test/get-extra")
     @TempDir
     lateinit var temporary: Path
+
+    @Test
+    fun `failed refresh preserves committed content and retries identical candidate`() = runBlocking {
+        val root = Context()
+        val loader = loader(root)
+        val file = temporary.resolve("retry.yml")
+        Files.writeString(file, "- id: inner\n  name: cordis:test\n")
+        val include = Include(root, IncludeConfig(file.toString(), layered = true))
+        include.init()
+        val candidate = "- id: inner\n  name: cordis:replacement\n"
+        Files.writeString(file, candidate)
+        assertFailsWith<IllegalArgumentException> { include.refresh() }
+        assertEquals("default", root.bailEvent(valueEvent, Unit))
+        loader.builtins["replacement"] = fixturePlugin("replacement", valueEvent, "replacement")
+        include.refresh()
+        assertEquals("replacement", root.bailEvent(valueEvent, Unit))
+        assertEquals(candidate, Files.readString(file))
+        include.root.stop()
+    }
+
+    @Test
+    fun `failed patch configuration preserves previous layer`() = runBlocking {
+        val root = Context()
+        val loader = loader(root)
+        val file = temporary.resolve("patch-retry.yml")
+        Files.writeString(file, "- id: inner\n  name: cordis:test\n")
+        val include = Include(root, IncludeConfig(file.toString(), layered = true))
+        include.init()
+        loader.builtins["bad"] = plugin<Any?> { _, _ -> error("broken plugin") }
+        val next = include.config.copy(patches = listOf(PatchOptions(id = "inner", replacement = "cordis:bad")))
+        assertFailsWith<IllegalStateException> { include.updateConfig(next) }
+        assertTrue(include.config.patches.isNullOrEmpty())
+        assertEquals("default", root.bailEvent(valueEvent, Unit))
+        include.root.stop()
+    }
+
+    @Test
+    fun `refresh reapplies patches without writing expanded layered config`() = runBlocking {
+        val root = Context()
+        loader(root)
+        val file = temporary.resolve("layered.yml")
+        Files.writeString(file, "- id: inner\n  name: cordis:test\n")
+        val include = Include(root, IncludeConfig(
+            path = file.toString(),
+            patches = listOf(PatchOptions(id = "inner", disabled = changeTo(true))),
+            layered = true,
+        ))
+        include.init()
+        assertNull(root.bailEvent(valueEvent, Unit))
+        val changed = "- id: inner\n  name: cordis:test\n  config: changed\n"
+        Files.writeString(file, changed)
+        include.refresh()
+        assertNull(root.bailEvent(valueEvent, Unit))
+        include.write()
+        assertEquals(changed, Files.readString(file))
+        include.updateConfig(include.config.copy(patches = emptyList()))
+        assertEquals("default", root.bailEvent(valueEvent, Unit))
+        include.root.stop()
+    }
 
     private fun fixturePlugin(name: String, event: EventKey<Unit, String>, value: String) =
         plugin<Any?>(name = name) { ctx, _ ->
@@ -50,9 +110,10 @@ class IncludeTest {
         ))
         val entry = EntryOptions(id = "entry", name = "cordis:test", extra = mapOf("custom" to 1, "kept" to true))
 
-        include.applyPatches(mutableListOf(entry))
+        val composed = include.applyPatches(mutableListOf(entry))
 
-        assertEquals(mapOf("custom" to 2, "kept" to true), entry.extra)
+        assertEquals(mapOf("custom" to 2, "kept" to true), composed.single().extra)
+        assertEquals(mapOf("custom" to 1, "kept" to true), entry.extra)
     }
 
     private fun writeBase(path: Path) {

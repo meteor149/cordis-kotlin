@@ -2,6 +2,7 @@ package org.cordis.packager
 
 import javax.inject.Inject
 import org.cordis.packages.PackageDependency
+import org.cordis.packages.PackageRepository
 import org.cordis.packages.PackageTarget
 import org.gradle.api.Action
 import org.gradle.api.Named
@@ -35,6 +36,12 @@ abstract class PluginRelease @Inject constructor(private val releaseName: String
     abstract val displayName: Property<String>
     abstract val description: Property<String>
     abstract val license: Property<String>
+    abstract val author: Property<String>
+    abstract val contributors: ListProperty<String>
+    abstract val homepage: Property<String>
+    abstract val repository: Property<PackageRepository>
+    abstract val bugsUrl: Property<String>
+    abstract val keywords: ListProperty<String>
     abstract val manifestExtensions: Property<String>
     abstract val extensionsFile: RegularFileProperty
     abstract val payloadDirectory: DirectoryProperty
@@ -47,6 +54,8 @@ abstract class PluginRelease @Inject constructor(private val releaseName: String
 
     init {
         contentVersion.convention(false)
+        contributors.convention(emptyList())
+        keywords.convention(emptyList())
         manifestExtensions.convention("{}")
         dependencies.convention(emptyList())
     }

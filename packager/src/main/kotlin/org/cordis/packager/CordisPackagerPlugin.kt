@@ -5,6 +5,7 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import org.cordis.packages.PackageRuntime
 import org.cordis.packages.PackageVariant
+import org.cordis.packages.CurrentPackageFormatVersion
 import org.cordis.packages.PluginPackageManifest
 import org.cordis.packages.validatePackagePath
 import org.cordis.packages.validatePackageId
@@ -42,6 +43,14 @@ class CordisPackagerPlugin : Plugin<Project> {
                 release.packageVersion.convention(project.version.toString())
                 validatePackageId(release.packageId.get())
                 validatePackageVersion(release.packageVersion.get())
+                val author = release.author.orNull
+                val contributors = release.contributors.get()
+                val homepage = release.homepage.orNull
+                val repository = release.repository.orNull
+                val bugsUrl = release.bugsUrl.orNull
+                val keywords = release.keywords.get()
+                val usesFormat2Metadata = author != null || contributors.isNotEmpty() || homepage != null || repository != null ||
+                    bugsUrl != null || keywords.isNotEmpty()
                 require(packageIds.add(release.packageId.get())) { "Duplicate release package identity: ${release.packageId.get()}" }
                 require(release.variants.isNotEmpty()) { "Release ${release.name} declares no variants" }
                 val inputs = release.variants.map { variant ->
@@ -70,6 +79,9 @@ class CordisPackagerPlugin : Plugin<Project> {
                     manifestTemplate.set(Json.encodeToString(PluginPackageManifest(
                         id = release.packageId.get(), version = release.packageVersion.get(),
                         displayName = release.displayName.orNull, description = release.description.orNull, license = release.license.orNull,
+                        formatVersion = if (usesFormat2Metadata) CurrentPackageFormatVersion else 1,
+                        author = author, contributors = contributors, homepage = homepage, repository = repository,
+                        bugsUrl = bugsUrl, keywords = keywords,
                         dependencies = release.dependencies.get(), variants = emptyList(), files = emptyList(), extensions = jsonObject(release.manifestExtensions.get()),
                     )))
                     variants.set(inputs)

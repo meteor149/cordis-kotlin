@@ -7,6 +7,8 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.supervisorScope
 import kotlinx.atomicfu.atomic
 import kotlinx.atomicfu.locks.SynchronizedObject
 import kotlinx.atomicfu.locks.synchronized
@@ -82,7 +84,7 @@ class EffectHandle internal constructor(
             try {
                 disposable.dispose()
             } catch (error: Throwable) {
-                if (failure == null) failure = error else failure!!.addSuppressed(error)
+                if (failure == null) failure = error else if (failure !== error) failure!!.addSuppressed(error)
             }
         }
         if (failure == null) {
@@ -147,7 +149,9 @@ class Fiber<C> internal constructor(
     private var desiredEpoch = INACTIVE
     private var loadedEpoch = INACTIVE
     private var loaded = false
+    private var application: Job? = null
     private val errorRef = atomic<Throwable?>(null)
+    private val cleanupFailure = atomic<Throwable?>(null)
     private var error: Throwable?
         get() = errorRef.value
         set(value) { errorRef.value = value }
@@ -296,6 +300,10 @@ class Fiber<C> internal constructor(
     }
 
     internal fun refresh() {
+        if (cleanupFailure.value != null) {
+            setEpoch(INACTIVE)
+            return
+        }
         val snapshot = synchronized(dependencyLock) { candidates.toMap() }
         var epoch = ""
         inject.keys.forEach { name ->
@@ -311,14 +319,20 @@ class Fiber<C> internal constructor(
 
     private fun setEpoch(epoch: String) {
         var start: Job? = null
+        var cancelApplication: Job? = null
         synchronized(transitionLock) {
-            if (epoch == desiredEpoch) return
+            // Explicit withdrawal must abort allocation, while dependency relocation
+            // retains its existing wait-for-load semantics. Never cancel the transition
+            // itself: it owns suspending resource cleanup after allocation stops.
+            if (uid == null && epoch == INACTIVE) cancelApplication = application
+            if (epoch == desiredEpoch) return@synchronized
             desiredEpoch = epoch
             if (inertia == null) {
                 start = ctx.scope.launch(start = CoroutineStart.LAZY) { transitionLoop() }
                 inertia = start
             }
         }
+        cancelApplication?.cancel()
         start?.start()
     }
 
@@ -335,6 +349,7 @@ class Fiber<C> internal constructor(
                     unload()
                     loaded = false
                     loadedEpoch = INACTIVE
+                    if (cleanupFailure.value != null) synchronized(transitionLock) { desiredEpoch = INACTIVE }
                     continue
                 }
 
@@ -359,9 +374,31 @@ class Fiber<C> internal constructor(
                             },
                             active = { synchronized(transitionLock) { desiredEpoch == target } },
                         )
-                        currentRuntime.plugin.apply(ctx, config, effect)
+                        val allocationFailure = supervisorScope {
+                            val failure = atomic<Throwable?>(null)
+                            // Transfer allocation failures as values. Deferred.await may clone
+                            // exceptions for stack recovery; Fiber must retain the provider's
+                            // original failure for repeated await and suppressed-error handling.
+                            val task = async(start = CoroutineStart.LAZY) {
+                                try { currentRuntime.plugin.apply(ctx, config, effect) }
+                                catch (cause: Throwable) { failure.value = cause }
+                            }
+                            val disposed = synchronized(transitionLock) {
+                                application = task
+                                uid == null
+                            }
+                            try {
+                                if (disposed) task.cancel() else task.start()
+                                try { task.await() } catch (cause: Throwable) { failure.compareAndSet(null, cause) }
+                                failure.value
+                            } finally {
+                                synchronized(transitionLock) { if (application === task) application = null }
+                            }
+                        }
+                        allocationFailure?.let { throw it }
                     }
                 } catch (cause: Throwable) {
+                    if (cause is CancellationException && uid == null) continue
                     ctx.logger().error(cause)
                     error = cause
                     synchronized(transitionLock) { desiredEpoch = INACTIVE }
@@ -399,7 +436,12 @@ class Fiber<C> internal constructor(
             }
         }
         synchronized(serviceLock) { serviceStore = null }
-        if (failures.size > 1) failures.drop(1).forEach(failures[0]::addSuppressed)
+        val failure = failures.firstOrNull() ?: return
+        failures.drop(1).filter { it !== failure }.forEach(failure::addSuppressed)
+        cleanupFailure.value = failure
+        val allocationFailure = error
+        if (allocationFailure == null) error = failure
+        else if (allocationFailure !== failure) allocationFailure.addSuppressed(failure)
     }
 
     private fun derivedState(): FiberState = when {
@@ -443,7 +485,10 @@ class Fiber<C> internal constructor(
     }
 
     private suspend fun disposeInternal() {
-        if (uid == null) return
+        if (uid == null) {
+            cleanupFailure.value?.let { throw it }
+            return
+        }
         uid = null
         ctx.emitEvent(CoreEvents.Plugin, this)
         runtime?.let { current ->
@@ -453,12 +498,14 @@ class Fiber<C> internal constructor(
         setEpoch(INACTIVE)
         awaitSettled()
         if (state != FiberState.DISPOSED) updateState(FiberState.DISPOSED)
+        cleanupFailure.value?.let { throw it }
     }
 
     suspend fun restart() {
         assertActive()
         setEpoch(INACTIVE)
         awaitSettled()
+        cleanupFailure.value?.let { throw it }
         inject.keys.forEach(::checkBinding)
         refresh()
         await()
@@ -466,6 +513,7 @@ class Fiber<C> internal constructor(
 
     suspend fun update(config: C, noSave: Boolean = false) {
         assertActive()
+        cleanupFailure.value?.let { throw it }
         val current = checkNotNull(runtime)
         val validator = current.plugin.config
         val nextConfig = validator?.validate(config) ?: config
